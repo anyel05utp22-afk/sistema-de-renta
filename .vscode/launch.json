@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Ejecutar Edificio La Cruceta",
+            "request": "launch",
+            "mainClass": "com.cruceta.cuotas.CuotasApplication",
+            "projectName": "cuotas-mantenimiento",
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

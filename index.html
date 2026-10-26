@@ -1,0 +1,1403 @@
+
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema Web "Edificio La Cruceta" - Cuotas de Mantenimiento</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- React 18 (copias locales, funciona sin internet) -->
+    <script src="vendor/react.production.min.js"></script>
+    <script src="vendor/react-dom.production.min.js"></script>
+    <script src="vendor/babel.min.js"></script>
+
+    <!-- Aplicacion React integrada (compatible con file://, Live Server y Spring Boot) -->
+    <script type="text/babel" data-presets="react">
+// =============================================================
+//  Comunicacion con el backend (Spring Boot)  ->  /api/...
+//  Funciona tanto en http://localhost:8080 como abriendo index.html
+//  directamente o con Live Server.
+// =============================================================
+const BASE_API = (window.location.port === "8080" && window.location.protocol.startsWith("http"))
+    ? ""
+    : "http://localhost:8080";
+
+const API = {
+    token() {
+        return sessionStorage.getItem("token");
+    },
+
+    async request(metodo, url, cuerpo, esFormulario) {
+        const opciones = { method: metodo, headers: {} };
+        if (API.token()) opciones.headers["Authorization"] = "Bearer " + API.token();
+        if (cuerpo !== undefined) {
+            if (esFormulario) {
+                opciones.body = cuerpo; // FormData (con archivo)
+            } else {
+                opciones.headers["Content-Type"] = "application/json";
+                opciones.body = JSON.stringify(cuerpo);
+            }
+        }
+        let res;
+        try {
+            res = await fetch(BASE_API + url, opciones);
+        } catch (err) {
+            throw new Error("No se pudo conectar al servidor Java (http://localhost:8080). Ejecuta iniciar.bat o presiona F5 en VS Code.");
+        }
+        let datos = null;
+        try { datos = await res.json(); } catch (e) { /* respuesta sin cuerpo */ }
+        if (!res.ok) {
+            const error = new Error((datos && (datos.error || datos.message)) || "Error de comunicacion con el servidor.");
+            error.status = res.status;
+            if (res.status === 401 && !url.endsWith("/login")) {
+                sessionStorage.clear();
+                window.dispatchEvent(new Event("sesion-expirada"));
+            }
+            throw error;
+        }
+        return datos;
+    },
+
+    get: (url) => API.request("GET", url),
+    post: (url, cuerpo) => API.request("POST", url, cuerpo === undefined ? {} : cuerpo),
+    put: (url, cuerpo) => API.request("PUT", url, cuerpo),
+    form: (url, formData) => API.request("POST", url, formData, true),
+
+    urlComprobante: (idComprobante) => `${BASE_API}/api/comprobantes/${idComprobante}/archivo?token=${API.token()}`,
+};
+
+
+// =============================================================
+//  Componentes y utilidades comunes de la interfaz
+// =============================================================
+const { useState, useEffect, useCallback } = React;
+
+const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio",
+    "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+function soles(n) {
+    const v = Number(n || 0);
+    return "S/. " + v.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function periodoTexto(p) {
+    if (!p) return "";
+    const [a, m] = p.split("-");
+    return MESES[Number(m) - 1] + " " + a;
+}
+
+function fechaTexto(f) {
+    if (!f) return "";
+    const [a, m, d] = f.substring(0, 10).split("-");
+    return `${d}/${m}/${a}`;
+}
+
+function hoyISO() {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().substring(0, 10);
+}
+
+/** Hook para cargar datos del backend. */
+function useDatos(url, deps) {
+    const [datos, setDatos] = useState(null);
+    const [error, setError] = useState(null);
+    const recargar = useCallback(() => {
+        if (!url) { setDatos(null); return; }
+        setError(null);
+        API.get(url).then(setDatos).catch((e) => setError(e.message));
+    }, [url]);
+    useEffect(recargar, [recargar].concat(deps || []));
+    return [datos, recargar, error];
+}
+
+function Alerta({ tipo, titulo, children }) {
+    if (!titulo && !children) return null;
+    return (
+        <div className={"alerta " + (tipo || "info")}>
+            {titulo && <b>{titulo}</b>}
+            {children}
+        </div>
+    );
+}
+
+/** Mensaje de resultado (exito / error) que se muestra arriba del formulario. */
+function Resultado({ res }) {
+    if (!res) return null;
+    return res.ok
+        ? <Alerta tipo="ok" titulo={res.titulo || "¡Operación exitosa!"}>{res.mensaje}</Alerta>
+        : <Alerta tipo="error" titulo={res.titulo || "¡Error en los datos!"}>{res.mensaje}</Alerta>;
+}
+
+function Campo({ label, children, className, ayuda }) {
+    return (
+        <div className={className}>
+            <label>{label}</label>
+            {children}
+            {ayuda && <div className="ayuda">{ayuda}</div>}
+        </div>
+    );
+}
+
+const COLOR_ESTADO = {
+    PAGADA: "b-verde", VALIDADO: "b-verde", ACTIVO: "b-verde", ACTIVA: "b-verde",
+    PENDIENTE: "b-amarillo", EN_REVISION: "b-amarillo",
+    VENCIDA: "b-rojo", RECHAZADO: "b-rojo", INACTIVO: "b-gris", INACTIVA: "b-gris",
+};
+const TEXTO_ESTADO = { EN_REVISION: "En Revisión", VALIDADO: "Verificado" };
+
+function Estado({ valor }) {
+    if (!valor) return null;
+    const texto = TEXTO_ESTADO[valor] || (valor.charAt(0) + valor.slice(1).toLowerCase());
+    return <span className={"badge " + (COLOR_ESTADO[valor] || "b-gris")}>{texto}</span>;
+}
+
+function Cargando({ error }) {
+    if (error) return <Alerta tipo="error" titulo="No se pudo cargar la información">{error}</Alerta>;
+    return <p className="vacio">Cargando...</p>;
+}
+
+function FilaVacia({ cols, texto }) {
+    return <tr><td colSpan={cols} className="vacio">{texto || "No hay registros."}</td></tr>;
+}
+
+/** Convierte una lista de objetos en un CSV descargable (RF-036 Exportar reporte). */
+function exportarCSV(nombre, columnas, filas) {
+    const enc = columnas.map((c) => c.titulo).join(";");
+    const cuerpo = filas.map((f) => columnas.map((c) => String(c.valor(f) ?? "").replace(/;/g, ",")).join(";")).join("\n");
+    const blob = new Blob(["\ufeff" + enc + "\n" + cuerpo], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = nombre;
+    a.click();
+}
+
+
+// =============================================================
+//  CUOTAS: RF-010, RF-011, RF-012, RF-013, RF-014, RF-015, RF-023
+// =============================================================
+
+/** RF-010 Generar cuota mensual + RF-011 Calcular monto (reparto del gasto del mes). */
+function GenerarCuota() {
+    const [conceptos] = useDatos("/api/conceptos");
+    const sig = new Date(); sig.setMonth(sig.getMonth() + 1);
+    const [periodo, setPeriodo] = useState(sig.toISOString().substring(0, 7));
+    const [vencimiento, setVencimiento] = useState("");
+    const [gastos, setGastos] = useState({});
+    const [calculo, setCalculo] = useState(null);
+    const [res, setRes] = useState(null);
+    const [enviando, setEnviando] = useState(false);
+
+    // Por defecto se propone el monto base de cada concepto
+    useEffect(() => {
+        if (conceptos) {
+            const g = {};
+            conceptos.forEach((c) => (g[c.id_concepto] = c.monto_base));
+            setGastos(g);
+        }
+    }, [conceptos]);
+
+    // Vencimiento por defecto: ultimo dia del periodo
+    useEffect(() => {
+        if (periodo) {
+            const [a, m] = periodo.split("-").map(Number);
+            setVencimiento(`${periodo}-${String(new Date(a, m, 0).getDate()).padStart(2, "0")}`);
+        }
+    }, [periodo]);
+
+    const listaGastos = () => Object.keys(gastos).map((id) => ({ id_concepto: Number(id), monto: gastos[id] }));
+
+    const calcular = async () => {
+        setRes(null);
+        try {
+            setCalculo(await API.post("/api/cuotas/calcular", { gastos: listaGastos() }));
+        } catch (e) {
+            setCalculo(null);
+            setRes({ ok: false, titulo: "¡Error en el cálculo!", mensaje: e.message });
+        }
+    };
+
+    const generar = async () => {
+        setEnviando(true);
+        try {
+            const r = await API.post("/api/cuotas/generar", { periodo, fecha_vencimiento: vencimiento, gastos: listaGastos() });
+            setCalculo(r);
+            setRes({ ok: true, titulo: "¡Cuotas Mensuales Generadas Exitosamente!", mensaje: r.mensaje });
+        } catch (e) {
+            setRes({ ok: false, titulo: "¡No se pudo generar la cuota!", mensaje: e.message });
+        }
+        setEnviando(false);
+    };
+
+    if (!conceptos) return <Cargando />;
+    return (
+        <div className="card">
+            <h2>Generar cuota mensual de mantenimiento</h2>
+            <Alerta tipo="info">
+                Ingrese cuánto gastó el edificio este mes en cada concepto. El total se reparte en partes iguales
+                entre los departamentos activos y se genera la cuota de cada uno.
+            </Alerta>
+            <Resultado res={res} />
+            <div className="grid">
+                <Campo label="Periodo de Cobro:">
+                    <input type="month" value={periodo} onChange={(e) => setPeriodo(e.target.value)} />
+                </Campo>
+                <Campo label="Fecha de Vencimiento:">
+                    <input type="date" value={vencimiento} onChange={(e) => setVencimiento(e.target.value)} />
+                </Campo>
+            </div>
+
+            <h3>Gastos del mes ({periodoTexto(periodo)})</h3>
+            <table>
+                <thead><tr><th>Concepto</th><th>Tipo</th><th className="num">Monto base</th><th style={{ width: 180 }}>Gasto real del mes (S/.)</th></tr></thead>
+                <tbody>
+                    {conceptos.map((c) => (
+                        <tr key={c.id_concepto}>
+                            <td>{c.nombre_concepto}</td>
+                            <td>{c.tipo_concepto}</td>
+                            <td className="num">{soles(c.monto_base)}</td>
+                            <td>
+                                <input type="number" step="0.01" min="0" value={gastos[c.id_concepto] ?? ""}
+                                    className={gastos[c.id_concepto] === "" ? "invalido" : ""}
+                                    onChange={(e) => { setGastos({ ...gastos, [c.id_concepto]: e.target.value }); setCalculo(null); }} />
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+
+            {calculo && (
+                <div className="kpis" style={{ marginTop: 16 }}>
+                    <div className="kpi"><span>Gasto total del edificio</span><strong>{soles(calculo.total_edificio)}</strong></div>
+                    <div className="kpi"><span>Departamentos activos</span><strong>{calculo.unidades}</strong></div>
+                    <div className="kpi"><span>Sin vigilancia (101, 301, 401, 402, 502)</span><strong>{soles(calculo.monto_sin_vigilancia)}</strong></div>
+                    <div className="kpi ok-kpi"><span>Aporte final con vigilancia (15 dptos)</span><strong>{soles(calculo.monto_por_unidad)}</strong></div>
+                </div>
+            )}
+
+            <div className="acciones" style={{ marginTop: 16 }}>
+                <button className="btn blanco" onClick={calcular}>Calcular monto de cuota</button>
+                <button className="btn verde" onClick={generar} disabled={enviando}>
+                    {enviando ? "Generando..." : "Generar y notificar cuotas"}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+/** RF-012 Consultar cuota (lista) con acciones segun el rol. */
+function ListaCuotas({ usuario, ir }) {
+    const esAdmin = usuario.rol === "ADMINISTRADOR";
+    const [periodos] = useDatos("/api/cuotas/periodos");
+    const [periodo, setPeriodo] = useState("");
+    const [estado, setEstado] = useState("");
+    const [cuotas, recargar, error] = useDatos(`/api/cuotas?periodo=${periodo}&estado=${estado}`);
+    const [seleccion, setSeleccion] = useState(null); // {id, modo: 'aviso' | 'editar'}
+    const [res, setRes] = useState(null);
+
+    const detectar = async () => {
+        try {
+            const r = await API.post("/api/cuotas/detectar-vencidas");
+            setRes({ ok: true, titulo: "Detección de cuotas vencidas", mensaje: r.mensaje });
+            recargar();
+        } catch (e) { setRes({ ok: false, mensaje: e.message }); }
+    };
+
+    if (seleccion && seleccion.modo === "aviso")
+        return <AvisoCobro idCuota={seleccion.id} volver={() => setSeleccion(null)} />;
+    if (seleccion && seleccion.modo === "editar")
+        return <EditarCuota idCuota={seleccion.id} volver={() => { setSeleccion(null); recargar(); }} />;
+
+    return (
+        <div className="card">
+            <h2>{esAdmin ? "Cuotas de mantenimiento" : "Mis cuotas de mantenimiento"}</h2>
+            <Resultado res={res} />
+            <div className="barra">
+                <Campo label="Periodo">
+                    <select value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
+                        <option value="">Todos</option>
+                        {(periodos || []).map((p) => <option key={p} value={p}>{periodoTexto(p)}</option>)}
+                    </select>
+                </Campo>
+                <Campo label="Estado">
+                    <select value={estado} onChange={(e) => setEstado(e.target.value)}>
+                        <option value="">Todos</option>
+                        <option value="PENDIENTE">Pendiente</option>
+                        <option value="PAGADA">Pagada</option>
+                        <option value="VENCIDA">Vencida</option>
+                    </select>
+                </Campo>
+                {esAdmin && <button className="btn gris" onClick={detectar}>Detectar cuotas vencidas</button>}
+            </div>
+            {!cuotas ? <Cargando error={error} /> : (
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Periodo</th>{esAdmin && <th>Unidad</th>}{esAdmin && <th>Propietario</th>}
+                            <th>Vence</th><th className="num">Monto</th><th className="num">Pagado</th>
+                            <th className="num">Saldo</th><th>Estado</th><th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {cuotas.length === 0 && <FilaVacia cols={9} />}
+                        {cuotas.map((c) => (
+                            <tr key={c.id_cuota}>
+                                <td>{periodoTexto(c.periodo)}</td>
+                                {esAdmin && <td>{c.unidad}</td>}
+                                {esAdmin && <td>{c.propietario || "-"}</td>}
+                                <td>{fechaTexto(c.fecha_vencimiento)}</td>
+                                <td className="num">{Number(c.monto_total).toFixed(2)}</td>
+                                <td className="num">{Number(c.monto_pagado).toFixed(2)}</td>
+                                <td className="num">{Number(c.saldo).toFixed(2)}</td>
+                                <td>
+                                    <Estado valor={c.estado_cuota} />
+                                    {Number(c.monto_en_revision) > 0 && <> <Estado valor="EN_REVISION" /></>}
+                                </td>
+                                <td className="acciones">
+                                    <button className="btn chico blanco" onClick={() => setSeleccion({ id: c.id_cuota, modo: "aviso" })}>Aviso</button>
+                                    {esAdmin && c.estado_cuota !== "PAGADA" && Number(c.monto_pagado) === 0 &&
+                                        <button className="btn chico gris" onClick={() => setSeleccion({ id: c.id_cuota, modo: "editar" })}>Editar</button>}
+                                    {c.estado_cuota !== "PAGADA" && Number(c.saldo) - Number(c.monto_en_revision) > 0 &&
+                                        <button className="btn chico verde" onClick={() => ir("registrar-pago", { idCuota: c.id_cuota })}>Pagar</button>}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+}
+
+/** RF-014 Descargar aviso de cobro (vista imprimible / guardar como PDF). */
+function AvisoCobro({ idCuota, volver }) {
+    const [c, , error] = useDatos(`/api/cuotas/${idCuota}`);
+    if (!c) return <Cargando error={error} />;
+    return (
+        <div className="card">
+            <div className="no-print acciones" style={{ marginBottom: 10 }}>
+                <button className="btn gris" onClick={volver}>← Volver</button>
+                <button className="btn" onClick={() => window.print()}>Imprimir / Descargar PDF</button>
+            </div>
+            <div className="documento">
+                <div className="doc-head">
+                    <h2>AVISO DE COBRO</h2>
+                    <div>Edificio "La Cruceta" — Cuota de mantenimiento</div>
+                </div>
+                <div className="grid">
+                    <div><b>Propietario:</b> {c.propietario || "-"}</div>
+                    <div><b>Unidad:</b> {c.unidad}</div>
+                    <div><b>Periodo:</b> {periodoTexto(c.periodo)}</div>
+                    <div><b>Estado:</b> <Estado valor={c.estado_cuota} /></div>
+                    <div><b>Fecha de emisión:</b> {fechaTexto(c.fecha_emision)}</div>
+                    <div><b>Fecha de vencimiento:</b> {fechaTexto(c.fecha_vencimiento)}</div>
+                </div>
+                <h3>Detalle de gastos del edificio (parte que corresponde al departamento)</h3>
+                <table>
+                    <thead><tr><th>Concepto</th><th className="num">Monto (S/.)</th></tr></thead>
+                    <tbody>
+                        {c.detalles.map((d) => (
+                            <tr key={d.id_concepto}><td>{d.nombre_concepto}</td><td className="num">{Number(d.monto_concepto).toFixed(2)}</td></tr>
+                        ))}
+                    </tbody>
+                </table>
+                <div className="total">Total cuota: {soles(c.monto_total)}</div>
+                <div className="total" style={{ fontSize: 15 }}>Pagado: {soles(c.monto_pagado)} &nbsp; | &nbsp; Saldo: {soles(c.saldo)}</div>
+                <p className="ayuda">Pague en efectivo a La Directiva o mediante Yape y registre su comprobante en el sistema antes de la fecha de vencimiento.</p>
+            </div>
+        </div>
+    );
+}
+
+/** RF-015 Editar cuota (solo si no esta pagada). */
+function EditarCuota({ idCuota, volver }) {
+    const [c, , error] = useDatos(`/api/cuotas/${idCuota}`);
+    const [venc, setVenc] = useState("");
+    const [detalles, setDetalles] = useState([]);
+    const [res, setRes] = useState(null);
+
+    useEffect(() => {
+        if (c) { setVenc(c.fecha_vencimiento); setDetalles(c.detalles.map((d) => ({ ...d }))); }
+    }, [c]);
+
+    const guardar = async () => {
+        try {
+            const r = await API.put(`/api/cuotas/${idCuota}`, { fecha_vencimiento: venc, detalles });
+            setRes({ ok: true, titulo: "¡Cuota editada exitosamente!", mensaje: r.mensaje });
+        } catch (e) { setRes({ ok: false, titulo: "¡No se pudo editar la cuota!", mensaje: e.message }); }
+    };
+
+    if (!c) return <Cargando error={error} />;
+    const total = detalles.reduce((s, d) => s + Number(d.monto_concepto || 0), 0);
+    return (
+        <div className="card">
+            <button className="btn gris" onClick={volver}>← Volver</button>
+            <h2 style={{ marginTop: 14 }}>Editar cuota — {c.unidad} / {periodoTexto(c.periodo)}</h2>
+            <Resultado res={res} />
+            <div className="grid">
+                <Campo label="Fecha de vencimiento:"><input type="date" value={venc} onChange={(e) => setVenc(e.target.value)} /></Campo>
+                <Campo label="Total de la cuota:"><input value={soles(total)} disabled /></Campo>
+            </div>
+            <table style={{ marginTop: 14 }}>
+                <thead><tr><th>Concepto</th><th style={{ width: 180 }}>Monto (S/.)</th></tr></thead>
+                <tbody>
+                    {detalles.map((d, i) => (
+                        <tr key={d.id_concepto}>
+                            <td>{d.nombre_concepto}</td>
+                            <td><input type="number" step="0.01" value={d.monto_concepto}
+                                onChange={(e) => { const n = [...detalles]; n[i] = { ...d, monto_concepto: e.target.value }; setDetalles(n); }} /></td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+            <button className="btn verde bloque" onClick={guardar}>Guardar cambios</button>
+        </div>
+    );
+}
+
+/** RF-013 Consultar estado de cuenta (admin elige la unidad; propietario ve la suya). */
+function EstadoCuenta({ usuario, ir }) {
+    const esAdmin = usuario.rol === "ADMINISTRADOR";
+    const [unidades] = useDatos(esAdmin ? "/api/unidades" : null);
+    const [idUnidad, setIdUnidad] = useState(esAdmin ? "" : usuario.idUnidad);
+    const [ec, , error] = useDatos(idUnidad ? `/api/estado-cuenta?idUnidad=${idUnidad}` : null);
+
+    return (
+        <div className="card">
+            <h2>Estado de cuenta</h2>
+            {esAdmin && (
+                <div className="barra">
+                    <Campo label="Departamento">
+                        <select value={idUnidad} onChange={(e) => setIdUnidad(e.target.value)}>
+                            <option value="">-- Seleccione --</option>
+                            {(unidades || []).map((u) => <option key={u.id_unidad} value={u.id_unidad}>{u.unidad} {u.propietario ? "— " + u.propietario : ""}</option>)}
+                        </select>
+                    </Campo>
+                </div>
+            )}
+            {!idUnidad ? (esAdmin ? <p className="vacio">Seleccione un departamento.</p> : <Alerta tipo="warn">Su usuario no tiene un departamento asignado.</Alerta>)
+                : !ec ? <Cargando error={error} /> : (
+                    <>
+                        <div className="grid" style={{ marginBottom: 16 }}>
+                            <Campo label="Propietario:"><input value={ec.propietario || "-"} disabled /></Campo>
+                            <Campo label="Unidad Inmobiliaria:"><input value={ec.unidad} disabled /></Campo>
+                        </div>
+                        <div className="kpis">
+                            <div className="kpi"><span>Total Cargos</span><strong>{soles(ec.total_cargos)}</strong></div>
+                            <div className="kpi"><span>Total Pagado</span><strong>{soles(ec.total_pagado)}</strong></div>
+                            <div className={"kpi " + (Number(ec.saldo_pendiente) > 0 ? "alerta-kpi" : "ok-kpi")}>
+                                <span>Saldo Pendiente</span><strong>{soles(ec.saldo_pendiente)}</strong>
+                            </div>
+                        </div>
+                        <h3>Detalle de Movimientos y Cuotas:</h3>
+                        <table>
+                            <thead><tr><th>Fecha</th><th>Concepto</th><th className="num">Cargo (S/.)</th><th className="num">Abono (S/.)</th><th>Estado</th>{!esAdmin && <th></th>}</tr></thead>
+                            <tbody>
+                                {ec.cuotas.length === 0 && <FilaVacia cols={6} />}
+                                {ec.cuotas.map((c) => (
+                                    <tr key={c.id_cuota}>
+                                        <td>{fechaTexto(c.fecha_emision)}</td>
+                                        <td>Cuota Mantenimiento - {periodoTexto(c.periodo)}</td>
+                                        <td className="num">{Number(c.monto_total).toFixed(2)}</td>
+                                        <td className="num">{Number(c.monto_pagado).toFixed(2)}</td>
+                                        <td><Estado valor={c.estado_cuota} />{Number(c.monto_en_revision) > 0 && <> <Estado valor="EN_REVISION" /></>}</td>
+                                        {!esAdmin && <td>{c.estado_cuota !== "PAGADA" && Number(c.saldo) - Number(c.monto_en_revision) > 0 &&
+                                            <button className="btn chico verde" onClick={() => ir("registrar-pago", { idCuota: c.id_cuota })}>Pagar</button>}</td>}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </>
+                )}
+        </div>
+    );
+}
+
+
+// =============================================================
+//  PAGOS: RF-016, RF-017, RF-018, RF-019, RF-020, RF-021, RF-022, RF-049
+// =============================================================
+
+/** RF-016 Registrar pago + RF-017 Cargar comprobante. Metodo de pago opcional (Escenario 3). */
+function RegistrarPago({ usuario, params, ir }) {
+    const esAdmin = usuario.rol === "ADMINISTRADOR";
+    const [cuotas, recargarCuotas] = useDatos("/api/cuotas");
+    const vacio = { id_cuota: "", monto_pagado: "", metodo_pago: "", nro_operacion: "", fecha_pago: hoyISO() };
+    const [f, setF] = useState({ ...vacio, id_cuota: params && params.idCuota ? String(params.idCuota) : "" });
+    const [archivo, setArchivo] = useState(null);
+    const [errores, setErrores] = useState({});
+    const [res, setRes] = useState(null);
+    const [registrado, setRegistrado] = useState(null);
+    const [enviando, setEnviando] = useState(false);
+
+    const pendientes = (cuotas || []).filter((c) => c.estado_cuota !== "PAGADA" && Number(c.saldo) - Number(c.monto_en_revision) > 0);
+    const cuota = pendientes.find((c) => String(c.id_cuota) === String(f.id_cuota));
+    const disponible = cuota ? Number(cuota.saldo) - Number(cuota.monto_en_revision) : 0;
+
+    // Al elegir la cuota se propone el saldo pendiente como monto
+    useEffect(() => {
+        if (cuota && !f.monto_pagado) setF((x) => ({ ...x, monto_pagado: disponible.toFixed(2) }));
+    }, [f.id_cuota, cuotas]);
+
+    const cambiar = (campo) => (e) => setF({ ...f, [campo]: e.target.value });
+
+    // Validacion en la interfaz (Escenario 2 - errores de validacion)
+    const validar = () => {
+        const err = {};
+        if (!f.id_cuota) err.id_cuota = "Seleccione la cuota a pagar.";
+        if (!f.monto_pagado || Number(f.monto_pagado) <= 0) err.monto_pagado = "El monto no puede ser cero ni negativo. Operación rechazada.";
+        else if (cuota && Number(f.monto_pagado) > disponible + 0.001) err.monto_pagado = `El monto supera el saldo pendiente (${soles(disponible)}).`;
+        if (f.metodo_pago && f.metodo_pago !== "EFECTIVO" && !f.nro_operacion.trim()) err.nro_operacion = "Ingrese el número de operación / voucher.";
+        if (!f.fecha_pago) err.fecha_pago = "Ingrese la fecha del pago.";
+        if (!esAdmin && !archivo) err.archivo = "Falta el comprobante requerido para validar la transacción.";
+        if (archivo && !/\.(pdf|jpe?g|png)$/i.test(archivo.name)) err.archivo = "Formato no permitido. Solo PDF, JPG o PNG.";
+        if (archivo && archivo.size > 5 * 1024 * 1024) err.archivo = "El archivo supera los 5 MB.";
+        setErrores(err);
+        return Object.keys(err).length === 0;
+    };
+
+    const enviar = async (e) => {
+        e.preventDefault();
+        setRes(null);
+        if (!validar()) {
+            setRes({ ok: false, titulo: "¡Error en Datos de Pago!", mensaje: "Si el monto es inválido o falta el comprobante requerido, el sistema solicita corregir la información." });
+            return;
+        }
+        const fd = new FormData();
+        Object.keys(f).forEach((k) => fd.append(k, f[k]));
+        if (archivo) fd.append("archivo", archivo);
+        setEnviando(true);
+        try {
+            const r = await API.form("/api/pagos", fd);
+            setRegistrado({ ...f, cuota, r });
+            setRes({ ok: true, titulo: "¡Pago Registrado Exitosamente!", mensaje: r.mensaje });
+            setF(vacio); setArchivo(null); recargarCuotas();
+        } catch (er) {
+            setRes({ ok: false, titulo: "¡Error en Datos de Pago!", mensaje: er.message });
+        }
+        setEnviando(false);
+    };
+
+    if (!cuotas) return <Cargando />;
+
+    // Pantalla de confirmacion (como la captura RF-016 evento exitoso)
+    if (registrado) {
+        const c = registrado.cuota;
+        return (
+            <div className="card">
+                <Resultado res={res} />
+                <div className="grid">
+                    <Campo label="Propietario / Unidad:"><input disabled value={`${c.propietario || usuario.nombreCompleto} (${c.unidad})`} /></Campo>
+                    <Campo label="Concepto a Pagar:"><input disabled value={"Cuota Mantenimiento - " + periodoTexto(c.periodo)} /></Campo>
+                    <Campo label="Monto Pagado (S/.):"><input disabled value={soles(registrado.monto_pagado)} style={{ color: "#059669", fontWeight: 700 }} /></Campo>
+                    <Campo label="N° de Operación / Voucher:"><input disabled value={registrado.nro_operacion || "-"} /></Campo>
+                    <Campo label="Método de pago:"><input disabled value={registrado.metodo_pago || "No especificado"} /></Campo>
+                    <Campo label="Fecha del Pago:"><input disabled value={fechaTexto(registrado.fecha_pago)} /></Campo>
+                </div>
+                <button className="btn verde bloque" onClick={() => { setRegistrado(null); setRes(null); }}>Registrar otro pago</button>
+                <button className="btn blanco bloque" style={{ marginTop: 8 }} onClick={() => ir("pagos")}>Ver pagos realizados</button>
+            </div>
+        );
+    }
+
+    return (
+        <div className="card">
+            <h2>Registrar pago de cuota</h2>
+            <Resultado res={res} />
+            {pendientes.length === 0 ? <Alerta tipo="ok" titulo="¡Sin deudas!">No hay cuotas pendientes de pago.</Alerta> : (
+                <form onSubmit={enviar} noValidate>
+                    <div className="grid">
+                        <Campo label="Cuota a pagar:" className="full" ayuda={errores.id_cuota}>
+                            <select value={f.id_cuota} onChange={(e) => setF({ ...f, id_cuota: e.target.value, monto_pagado: "" })}
+                                className={errores.id_cuota ? "invalido" : ""}>
+                                <option value="">-- Seleccione --</option>
+                                {pendientes.map((c) => (
+                                    <option key={c.id_cuota} value={c.id_cuota}>
+                                        {esAdmin ? c.unidad + " — " : ""}Cuota Mantenimiento - {periodoTexto(c.periodo)} — saldo {soles(Number(c.saldo) - Number(c.monto_en_revision))} ({c.estado_cuota})
+                                    </option>
+                                ))}
+                            </select>
+                        </Campo>
+                        <Campo label="Monto Pagado (S/.):" ayuda={errores.monto_pagado}>
+                            <input type="number" step="0.01" value={f.monto_pagado} onChange={cambiar("monto_pagado")} className={errores.monto_pagado ? "invalido" : ""} />
+                        </Campo>
+                        <Campo label="Fecha del Pago:" ayuda={errores.fecha_pago}>
+                            <input type="date" value={f.fecha_pago} max={hoyISO()} onChange={cambiar("fecha_pago")} className={errores.fecha_pago ? "invalido" : ""} />
+                        </Campo>
+                        <Campo label="Método de pago (opcional):">
+                            <select value={f.metodo_pago} onChange={cambiar("metodo_pago")}>
+                                <option value="">-- No especificar --</option>
+                                <option value="EFECTIVO">Efectivo</option>
+                                <option value="YAPE">Yape</option>
+                            </select>
+                        </Campo>
+                        <Campo label="N° de Operación / Boleta:" ayuda={errores.nro_operacion}>
+                            <input value={f.nro_operacion} onChange={cambiar("nro_operacion")} placeholder="004148 o código Yape" className={errores.nro_operacion ? "invalido" : ""} />
+                        </Campo>
+                        <Campo label={"Comprobante de Pago " + (esAdmin ? "(opcional)" : "(PDF, JPG o PNG)") + ":"} className="full"
+                            ayuda={errores.archivo || "Tamaño máximo 5 MB."}>
+                            <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setArchivo(e.target.files[0] || null)}
+                                className={errores.archivo ? "invalido" : ""} />
+                        </Campo>
+                    </div>
+                    {esAdmin && <Alerta tipo="info">Los pagos registrados por la administración quedan validados y se emite la constancia automáticamente.</Alerta>}
+                    <button className="btn verde bloque" disabled={enviando}>{enviando ? "Registrando..." : "Registrar Pago"}</button>
+                </form>
+            )}
+        </div>
+    );
+}
+
+/** RF-018 Consultar pagos / RF-019 Validar / RF-020 Rechazar / RF-049 Ver comprobante. */
+function ListaPagos({ usuario }) {
+    const esAdmin = usuario.rol === "ADMINISTRADOR";
+    const [estado, setEstado] = useState(esAdmin ? "EN_REVISION" : "");
+    const [pagos, recargar, error] = useDatos(`/api/pagos?estado=${estado}`);
+    const [rechazo, setRechazo] = useState(null); // {id, motivo}
+    const [res, setRes] = useState(null);
+
+    const validar = async (p) => {
+        if (!confirm(`¿Validar el pago ${p.nro_operacion || "#" + p.id_pago} de ${p.unidad} por ${soles(p.monto_pagado)}?`)) return;
+        try {
+            const r = await API.post(`/api/pagos/${p.id_pago}/validar`);
+            setRes({ ok: true, titulo: "¡Comprobante Validado Exitosamente!", mensaje: r.mensaje });
+            recargar();
+        } catch (e) { setRes({ ok: false, mensaje: e.message }); }
+    };
+
+    const rechazar = async () => {
+        if (!rechazo.motivo.trim()) {
+            setRes({ ok: false, titulo: "¡Falta el motivo!", mensaje: "Debe registrar el motivo del rechazo." });
+            return;
+        }
+        try {
+            const r = await API.post(`/api/pagos/${rechazo.id}/rechazar`, { motivo: rechazo.motivo });
+            setRes({ ok: true, titulo: "Comprobante rechazado", mensaje: r.mensaje });
+            setRechazo(null);
+            recargar();
+        } catch (e) { setRes({ ok: false, mensaje: e.message }); }
+    };
+
+    return (
+        <div className="card">
+            <h2>{esAdmin ? "Pagos registrados y validación de comprobantes" : "Mis pagos realizados"}</h2>
+            {!esAdmin && <div className="grid" style={{ marginBottom: 14 }}>
+                <Campo label="Propietario:"><input disabled value={usuario.nombreCompleto} /></Campo>
+                <Campo label="Unidad Inmobiliaria:"><input disabled value={usuario.unidad || "-"} /></Campo>
+            </div>}
+            <Resultado res={res} />
+            {rechazo && (
+                <Alerta tipo="warn" titulo={"Rechazar pago #" + rechazo.id}>
+                    <textarea rows="2" placeholder="Motivo del rechazo (obligatorio)" value={rechazo.motivo}
+                        onChange={(e) => setRechazo({ ...rechazo, motivo: e.target.value })} />
+                    <div className="acciones" style={{ marginTop: 8 }}>
+                        <button className="btn rojo chico" onClick={rechazar}>Confirmar rechazo</button>
+                        <button className="btn gris chico" onClick={() => setRechazo(null)}>Cancelar</button>
+                    </div>
+                </Alerta>
+            )}
+            <div className="barra">
+                <Campo label="Estado del pago">
+                    <select value={estado} onChange={(e) => setEstado(e.target.value)}>
+                        <option value="">Todos</option>
+                        <option value="EN_REVISION">En revisión</option>
+                        <option value="VALIDADO">Validado</option>
+                        <option value="RECHAZADO">Rechazado</option>
+                    </select>
+                </Campo>
+            </div>
+            {!pagos ? <Cargando error={error} /> : (
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha Operación</th>{esAdmin && <th>Unidad</th>}<th>Concepto</th><th>N° Operación / Voucher</th>
+                            <th>Método</th><th className="num">Monto (S/.)</th><th>Estado</th><th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {pagos.length === 0 && <FilaVacia cols={8} />}
+                        {pagos.map((p) => (
+                            <tr key={p.id_pago}>
+                                <td>{fechaTexto(p.fecha_pago)}</td>
+                                {esAdmin && <td>{p.unidad}<div className="ayuda">{p.usuario}</div></td>}
+                                <td>Cuota Mantenimiento - {periodoTexto(p.periodo)}</td>
+                                <td>{p.nro_operacion || "-"}</td>
+                                <td>{p.metodo_pago || "No especificado"}</td>
+                                <td className="num">{Number(p.monto_pagado).toFixed(2)}</td>
+                                <td>
+                                    <Estado valor={p.estado_pago} />
+                                    {p.observacion && <div className="ayuda">Motivo: {p.observacion}</div>}
+                                </td>
+                                <td className="acciones">
+                                    {p.id_comprobante && <a className="btn chico blanco" href={API.urlComprobante(p.id_comprobante)} target="_blank">Comprobante</a>}
+                                    {p.numero_recibo && <span className="badge b-azul">{p.numero_recibo}</span>}
+                                    {esAdmin && p.estado_pago === "EN_REVISION" && <>
+                                        <button className="btn chico verde" onClick={() => validar(p)}>Validar</button>
+                                        <button className="btn chico rojo" onClick={() => setRechazo({ id: p.id_pago, motivo: "" })}>Rechazar</button>
+                                    </>}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+}
+
+/** RF-022 Consultar constancias de pago + RF-021 Emitir (imprimir) constancia. */
+function Constancias({ usuario }) {
+    const esAdmin = usuario.rol === "ADMINISTRADOR";
+    const [recibos, , error] = useDatos("/api/recibos");
+    const [ver, setVer] = useState(null);
+
+    if (ver) {
+        const dpto = (ver.unidad || "").split("-").pop().trim();
+        const [anio, mes, dia] = (ver.fecha_emision || ver.fecha_pago || "2026-10-25").split("-");
+        const conceptoRecibo = ver.metodo_pago === "YAPE"
+            ? `Pago de servicios (Yape) - ${periodoTexto(ver.periodo)}`
+            : `Pago de servicios (Efectivo) - ${periodoTexto(ver.periodo)}`;
+        return (
+            <div className="card">
+                <div className="no-print acciones" style={{ marginBottom: 10 }}>
+                    <button className="btn gris" onClick={() => setVer(null)}>← Volver</button>
+                    <button className="btn" onClick={() => window.print()}>Imprimir / Descargar PDF</button>
+                </div>
+                <div className="documento" style={{ maxWidth: 680, padding: "26px 32px", position: "relative" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div style={{ textAlign: "center", flex: 1 }}>
+                            <h2 style={{ margin: 0, color: "#1e3a8a", fontSize: 22, letterSpacing: 1 }}>RESIDENCIAL LA CRUCETA</h2>
+                            <div style={{ color: "#1e3a8a", fontWeight: 700, fontSize: 17, marginTop: 2 }}>BLOCK 73</div>
+                        </div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: "#334155", minWidth: 50, textAlign: "right" }}>
+                            {dpto}
+                        </div>
+                    </div>
+
+                    <div style={{ marginTop: 22, lineHeight: "2.2" }}>
+                        <div><b>RECIBO :</b> ........................................................................</div>
+                        <div style={{ borderBottom: "1px dotted #64748b" }}>
+                            <b>Recibí del Sr. (a) :</b> &nbsp; <span style={{ fontSize: 17 }}>{ver.usuario}</span>
+                        </div>
+                        <div style={{ borderBottom: "1px dotted #64748b" }}>
+                            <b>La cantidad de :</b> &nbsp; <span style={{ fontSize: 18, fontWeight: 700 }}>{soles(ver.monto_pagado)}</span>
+                        </div>
+                        <div style={{ borderBottom: "1px dotted #64748b" }}>
+                            <b>Por concepto de :</b> &nbsp; <span style={{ fontSize: 16 }}>{conceptoRecibo}</span>
+                        </div>
+                        <div style={{ borderBottom: "1px dotted #64748b", height: 24 }}></div>
+                    </div>
+
+                    <div style={{ textAlign: "right", marginTop: 16, fontSize: 14 }}>
+                        Surco &nbsp; <b>{dia}</b> &nbsp; de &nbsp; <b>{mes}</b> &nbsp; 20<b>{String(anio).slice(-2)}</b>
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: 26 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+                            <div style={{
+                                border: "2px solid #1d4ed8", borderRadius: "50%", padding: "10px 16px",
+                                color: "#1d4ed8", textAlign: "center", fontSize: 10, fontWeight: 700, transform: "rotate(-6deg)"
+                            }}>
+                                <div>EDIFICIO 73</div>
+                                <div style={{ border: "1px solid #1d4ed8", padding: "1px 6px", margin: "3px 0" }}>LA DIRECTIVA</div>
+                                <div>LA CRUCETA - SURCO</div>
+                            </div>
+                            <div style={{ color: "#dc2626", fontFamily: "Courier New, monospace", fontSize: 22, fontWeight: 700 }}>
+                                N° {ver.numero_recibo}
+                            </div>
+                        </div>
+                        <div style={{ textAlign: "center", minWidth: 200 }}>
+                            <div style={{ fontFamily: "Segoe Print, cursive", fontSize: 16, color: "#1e293b" }}>Rosa Quispe H.</div>
+                            <div style={{ borderTop: "1px dotted #334155", paddingTop: 4, fontWeight: 700, fontSize: 13 }}>
+                                LA DIRECTIVA
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="card">
+            <h2>Constancias de pago</h2>
+            {!recibos ? <Cargando error={error} /> : (
+                <table>
+                    <thead><tr><th>N° Constancia</th><th>Emisión</th>{esAdmin && <th>Unidad</th>}<th>Concepto</th><th className="num">Monto (S/.)</th><th></th></tr></thead>
+                    <tbody>
+                        {recibos.length === 0 && <FilaVacia cols={6} />}
+                        {recibos.map((r) => (
+                            <tr key={r.id_recibo}>
+                                <td>{r.numero_recibo}</td>
+                                <td>{fechaTexto(r.fecha_emision)}</td>
+                                {esAdmin && <td>{r.unidad}</td>}
+                                <td>Cuota Mantenimiento - {periodoTexto(r.periodo)}</td>
+                                <td className="num">{Number(r.monto_pagado).toFixed(2)}</td>
+                                <td><button className="btn chico blanco" onClick={() => setVer(r)}>Ver / Imprimir</button></td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+}
+
+
+// =============================================================
+//  ADMINISTRACION: Dashboard, Usuarios, Unidades, Conceptos,
+//  Morosidad y Mi Perfil (compartido)
+// =============================================================
+
+/** RF-041 Visualizar dashboard administrativo / RF-032 Recaudacion / RF-037 Saldo del periodo */
+function Dashboard({ ir }) {
+    const [periodos] = useDatos("/api/cuotas/periodos");
+    const [periodo, setPeriodo] = useState("");
+    const [d, , error] = useDatos(`/api/dashboard?periodo=${periodo}`);
+    if (!d) return <Cargando error={error} />;
+    const avance = Number(d.total_emitido) > 0 ? (Number(d.total_recaudado) * 100 / Number(d.total_emitido)).toFixed(1) : 0;
+    return (
+        <div className="card">
+            <h2>Dashboard administrativo</h2>
+            <div className="barra">
+                <Campo label="Periodo">
+                    <select value={periodo || d.periodo} onChange={(e) => setPeriodo(e.target.value)}>
+                        {(periodos || []).map((p) => <option key={p} value={p}>{periodoTexto(p)}</option>)}
+                    </select>
+                </Campo>
+            </div>
+            <h3>Recaudación de {periodoTexto(d.periodo)}</h3>
+            <div className="kpis">
+                <div className="kpi"><span>Total emitido</span><strong>{soles(d.total_emitido)}</strong></div>
+                <div className="kpi ok-kpi"><span>Total recaudado ({avance}%)</span><strong>{soles(d.total_recaudado)}</strong></div>
+                <div className="kpi alerta-kpi"><span>Saldo pendiente del periodo</span><strong>{soles(d.total_pendiente)}</strong></div>
+                <div className="kpi"><span>Cuotas pagadas / emitidas</span><strong>{d.pagadas} / {d.cuotas}</strong></div>
+            </div>
+            <h3>Situación general</h3>
+            <div className="kpis">
+                <div className="kpi"><span>Departamentos activos</span><strong>{d.unidades}</strong></div>
+                <div className="kpi alerta-kpi"><span>Pagos por validar</span><strong>{d.pagos_en_revision}</strong></div>
+                <div className="kpi"><span>Departamentos morosos</span><strong style={{ color: "#b91c1c" }}>{d.unidades_morosas}</strong></div>
+                <div className="kpi"><span>Deuda vencida ({d.cuotas_vencidas} cuotas)</span><strong style={{ color: "#b91c1c" }}>{soles(d.deuda_vencida)}</strong></div>
+            </div>
+            <div className="acciones">
+                <button className="btn verde" onClick={() => ir("generar")}>Generar cuota del mes</button>
+                <button className="btn" onClick={() => ir("pagos")}>Validar pagos ({d.pagos_en_revision})</button>
+                <button className="btn rojo" onClick={() => ir("morosidad")}>Ver morosidad</button>
+            </div>
+        </div>
+    );
+}
+
+/** RF-001 Registrar propietario o residente / RF-006 Asignar roles / RF-008 Desactivar usuario */
+function Usuarios() {
+    const [usuarios, recargar, error] = useDatos("/api/usuarios");
+    const [roles] = useDatos("/api/roles");
+    const [unidades] = useDatos("/api/unidades");
+    const vacio = { nombre: "", apellido: "", dni: "", id_unidad: "", id_rol: "2", correo: "", telefono: "", fecha_nacimiento: "", direccion: "", contrasena: "" };
+    const [f, setF] = useState(vacio);
+    const [res, setRes] = useState(null);
+    const c = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+    const registrar = async (e) => {
+        e.preventDefault();
+        try {
+            const r = await API.post("/api/usuarios", f);
+            setRes({ ok: true, titulo: "¡Registro Exitoso!", mensaje: `${f.nombre} ${f.apellido} fue registrado. ${r.mensaje}` });
+            setF(vacio); recargar();
+        } catch (er) { setRes({ ok: false, titulo: "¡Error en el registro!", mensaje: er.message }); }
+    };
+
+    const cambiarRol = async (u, idRol) => {
+        try { const r = await API.put(`/api/usuarios/${u.id_usuario}/rol`, { id_rol: idRol }); setRes({ ok: true, mensaje: r.mensaje }); recargar(); }
+        catch (er) { setRes({ ok: false, mensaje: er.message }); }
+    };
+
+    const cambiarEstado = async (u, confirmar) => {
+        const estado = u.estado_cuenta === "ACTIVO" ? "INACTIVO" : "ACTIVO";
+        try {
+            const r = await API.put(`/api/usuarios/${u.id_usuario}/estado`, { estado, confirmar: !!confirmar });
+            setRes({ ok: true, mensaje: r.mensaje }); recargar();
+        } catch (er) {
+            // 409 = tiene cuotas pendientes -> se pide confirmacion
+            if (er.status === 409 && confirm(er.message)) return cambiarEstado(u, true);
+            if (er.status !== 409) setRes({ ok: false, mensaje: er.message });
+        }
+    };
+
+    return (
+        <>
+            <div className="card">
+                <h2>Registrar propietario o residente</h2>
+                <Resultado res={res} />
+                <form onSubmit={registrar}>
+                    <div className="grid">
+                        <Campo label="Nombres:"><input value={f.nombre} onChange={c("nombre")} /></Campo>
+                        <Campo label="Apellidos:"><input value={f.apellido} onChange={c("apellido")} /></Campo>
+                        <Campo label="DNI:"><input value={f.dni} maxLength="8" onChange={c("dni")} /></Campo>
+                        <Campo label="Fecha de nacimiento:"><input type="date" value={f.fecha_nacimiento} onChange={c("fecha_nacimiento")} /></Campo>
+                        <Campo label="Número de Departamento:">
+                            <select value={f.id_unidad} onChange={c("id_unidad")}>
+                                <option value="">-- Seleccione --</option>
+                                {(unidades || []).map((u) => <option key={u.id_unidad} value={u.id_unidad}>{u.unidad}{u.propietario ? " (dueño: " + u.propietario + ")" : " (sin dueño)"}</option>)}
+                            </select>
+                        </Campo>
+                        <Campo label="Tipo de Usuario:">
+                            <select value={f.id_rol} onChange={c("id_rol")}>
+                                {(roles || []).map((r) => <option key={r.id_rol} value={r.id_rol}>{r.nombre_rol}</option>)}
+                            </select>
+                        </Campo>
+                        <Campo label="Correo Electrónico:"><input value={f.correo} onChange={c("correo")} /></Campo>
+                        <Campo label="Teléfono / Celular:"><input value={f.telefono} maxLength="9" onChange={c("telefono")} /></Campo>
+                        <Campo label="Dirección:"><input value={f.direccion} onChange={c("direccion")} /></Campo>
+                        <Campo label="Contraseña inicial:" ayuda="Si se deja vacía, la contraseña será el DNI."><input type="password" value={f.contrasena} onChange={c("contrasena")} /></Campo>
+                    </div>
+                    <button className="btn verde bloque">Registrar Usuario</button>
+                </form>
+            </div>
+            <div className="card">
+                <h2>Usuarios del sistema</h2>
+                {!usuarios ? <Cargando error={error} /> : (
+                    <table>
+                        <thead><tr><th>DNI</th><th>Nombre</th><th>Unidad</th><th>Correo</th><th>Teléfono</th><th>Rol</th><th>Estado</th><th></th></tr></thead>
+                        <tbody>
+                            {usuarios.map((u) => (
+                                <tr key={u.id_usuario}>
+                                    <td>{u.dni}</td>
+                                    <td>{u.nombre} {u.apellido}</td>
+                                    <td>{u.unidad || "-"}</td>
+                                    <td>{u.correo}</td>
+                                    <td>{u.telefono}</td>
+                                    <td>
+                                        <select value={u.id_rol} onChange={(e) => cambiarRol(u, e.target.value)} style={{ padding: 4 }}>
+                                            {(roles || []).map((r) => <option key={r.id_rol} value={r.id_rol}>{r.nombre_rol}</option>)}
+                                        </select>
+                                    </td>
+                                    <td><Estado valor={u.estado_cuenta} /></td>
+                                    <td>
+                                        <button className={"btn chico " + (u.estado_cuenta === "ACTIVO" ? "rojo" : "verde")} onClick={() => cambiarEstado(u)}>
+                                            {u.estado_cuenta === "ACTIVO" ? "Desactivar" : "Activar"}
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+        </>
+    );
+}
+
+/** RF-002 Registrar unidad del edificio / RF-048 Historial de pagos por unidad */
+function Unidades() {
+    const [unidades, recargar, error] = useDatos("/api/unidades");
+    const [f, setF] = useState({ bloque: "Block 73", numero_unidad: "", estado: "ACTIVA" });
+    const [res, setRes] = useState(null);
+    const [historial, setHistorial] = useState(null);
+    const [pagos] = useDatos(historial ? `/api/pagos?idUnidad=${historial.id_unidad}` : null);
+
+    const registrar = async (e) => {
+        e.preventDefault();
+        try {
+            const r = await API.post("/api/unidades", f);
+            setRes({ ok: true, titulo: "¡Unidad registrada!", mensaje: r.mensaje });
+            setF({ ...f, numero_unidad: "" }); recargar();
+        } catch (er) { setRes({ ok: false, mensaje: er.message }); }
+    };
+
+    const cambiarEstado = async (u) => {
+        try { await API.put(`/api/unidades/${u.id_unidad}`, { estado: u.estado === "ACTIVA" ? "INACTIVA" : "ACTIVA" }); recargar(); }
+        catch (er) { setRes({ ok: false, mensaje: er.message }); }
+    };
+
+    return (
+        <>
+            <div className="card">
+                <h2>Registrar unidad (departamento)</h2>
+                <Resultado res={res} />
+                <form onSubmit={registrar} className="grid3">
+                    <Campo label="Bloque / Torre:"><input value={f.bloque} onChange={(e) => setF({ ...f, bloque: e.target.value })} /></Campo>
+                    <Campo label="Número de departamento:"><input value={f.numero_unidad} onChange={(e) => setF({ ...f, numero_unidad: e.target.value })} /></Campo>
+                    <Campo label="Estado:">
+                        <select value={f.estado} onChange={(e) => setF({ ...f, estado: e.target.value })}>
+                            <option value="ACTIVA">Activa</option><option value="INACTIVA">Inactiva</option>
+                        </select>
+                    </Campo>
+                    <div className="full"><button className="btn verde">Registrar Unidad</button></div>
+                </form>
+            </div>
+            {historial && (
+                <div className="card">
+                    <h2>Historial de pagos — {historial.unidad}</h2>
+                    <button className="btn gris chico" onClick={() => setHistorial(null)}>Cerrar</button>
+                    {!pagos ? <Cargando /> : (
+                        <table>
+                            <thead><tr><th>Fecha</th><th>Periodo</th><th>Pagado por</th><th>N° Operación</th><th className="num">Monto</th><th>Estado</th></tr></thead>
+                            <tbody>
+                                {pagos.length === 0 && <FilaVacia cols={6} />}
+                                {pagos.map((p) => <tr key={p.id_pago}><td>{fechaTexto(p.fecha_pago)}</td><td>{periodoTexto(p.periodo)}</td><td>{p.usuario}</td><td>{p.nro_operacion || "-"}</td><td className="num">{Number(p.monto_pagado).toFixed(2)}</td><td><Estado valor={p.estado_pago} /></td></tr>)}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
+            <div className="card">
+                <h2>Unidades del edificio</h2>
+                {!unidades ? <Cargando error={error} /> : (
+                    <table>
+                        <thead><tr><th>Bloque</th><th>N°</th><th>Propietario (dueño)</th><th>Estado</th><th></th></tr></thead>
+                        <tbody>
+                            {unidades.map((u) => (
+                                <tr key={u.id_unidad}>
+                                    <td>{u.bloque}</td><td>{u.numero_unidad}</td><td>{u.propietario || <i>Sin propietario</i>}</td>
+                                    <td><Estado valor={u.estado} /></td>
+                                    <td className="acciones">
+                                        <button className="btn chico blanco" onClick={() => setHistorial(u)}>Historial de pagos</button>
+                                        <button className="btn chico gris" onClick={() => cambiarEstado(u)}>{u.estado === "ACTIVA" ? "Inactivar" : "Activar"}</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+        </>
+    );
+}
+
+/** RF-009 Configurar conceptos de cobro (gastos del edificio) */
+function Conceptos() {
+    const [conceptos, recargar, error] = useDatos("/api/conceptos");
+    const vacio = { id_concepto: null, nombre_concepto: "", tipo_concepto: "VARIABLE", monto_base: "" };
+    const [f, setF] = useState(vacio);
+    const [res, setRes] = useState(null);
+
+    const guardar = async (e) => {
+        e.preventDefault();
+        try {
+            const r = f.id_concepto ? await API.put(`/api/conceptos/${f.id_concepto}`, f) : await API.post("/api/conceptos", f);
+            setRes({ ok: true, titulo: "¡Concepto guardado!", mensaje: r.mensaje });
+            setF(vacio); recargar();
+        } catch (er) { setRes({ ok: false, mensaje: er.message }); }
+    };
+
+    return (
+        <>
+            <div className="card">
+                <h2>{f.id_concepto ? "Editar concepto de cobro" : "Nuevo concepto de cobro"}</h2>
+                <Resultado res={res} />
+                <form onSubmit={guardar} className="grid3">
+                    <Campo label="Nombre del concepto:"><input value={f.nombre_concepto} onChange={(e) => setF({ ...f, nombre_concepto: e.target.value })} /></Campo>
+                    <Campo label="Tipo:" ayuda="FIJO: igual cada mes · VARIABLE: depende del consumo">
+                        <select value={f.tipo_concepto} onChange={(e) => setF({ ...f, tipo_concepto: e.target.value })}>
+                            <option value="FIJO">FIJO</option><option value="VARIABLE">VARIABLE</option>
+                        </select>
+                    </Campo>
+                    <Campo label="Gasto mensual referencial (S/.):"><input type="number" step="0.01" value={f.monto_base} onChange={(e) => setF({ ...f, monto_base: e.target.value })} /></Campo>
+                    <div className="full acciones">
+                        <button className="btn verde">Guardar concepto</button>
+                        {f.id_concepto && <button type="button" className="btn gris" onClick={() => setF(vacio)}>Cancelar</button>}
+                    </div>
+                </form>
+            </div>
+            <div className="card">
+                <h2>Conceptos configurados</h2>
+                {!conceptos ? <Cargando error={error} /> : (
+                    <table>
+                        <thead><tr><th>Concepto</th><th>Tipo</th><th className="num">Gasto referencial (edificio)</th><th></th></tr></thead>
+                        <tbody>
+                            {conceptos.map((k) => (
+                                <tr key={k.id_concepto}>
+                                    <td>{k.nombre_concepto}</td><td>{k.tipo_concepto}</td><td className="num">{soles(k.monto_base)}</td>
+                                    <td><button className="btn chico blanco" onClick={() => setF({ ...k })}>Editar</button></td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+        </>
+    );
+}
+
+/** RF-024 Consultar morosidad / RF-025 Reporte de morosidad / RF-036 Exportar reporte */
+function Morosidad() {
+    const [filas, , error] = useDatos("/api/morosidad");
+    if (!filas) return <Cargando error={error} />;
+    const total = filas.reduce((s, f) => s + Number(f.saldo), 0);
+    const unidades = new Set(filas.map((f) => f.id_unidad)).size;
+    const exportar = () => exportarCSV("reporte_morosidad.csv", [
+        { titulo: "Unidad", valor: (f) => f.unidad },
+        { titulo: "Propietario", valor: (f) => f.propietario },
+        { titulo: "Telefono", valor: (f) => f.telefono },
+        { titulo: "Periodo", valor: (f) => periodoTexto(f.periodo) },
+        { titulo: "Vencimiento", valor: (f) => fechaTexto(f.fecha_vencimiento) },
+        { titulo: "Dias de atraso", valor: (f) => f.dias_atraso },
+        { titulo: "Saldo (S/.)", valor: (f) => Number(f.saldo).toFixed(2) },
+    ], filas);
+
+    return (
+        <div className="card">
+            <h2>Reporte de morosidad</h2>
+            <div className="kpis">
+                <div className="kpi"><span>Departamentos morosos</span><strong style={{ color: "#b91c1c" }}>{unidades}</strong></div>
+                <div className="kpi"><span>Cuotas vencidas</span><strong>{filas.length}</strong></div>
+                <div className="kpi alerta-kpi"><span>Deuda vencida total</span><strong>{soles(total)}</strong></div>
+            </div>
+            <div className="acciones no-print" style={{ marginBottom: 10 }}>
+                <button className="btn" onClick={exportar}>Exportar a Excel (CSV)</button>
+                <button className="btn gris" onClick={() => window.print()}>Imprimir reporte</button>
+            </div>
+            <table>
+                <thead><tr><th>Unidad</th><th>Propietario</th><th>Teléfono</th><th>Periodo</th><th>Vencimiento</th><th className="num">Días de atraso</th><th className="num">Saldo (S/.)</th></tr></thead>
+                <tbody>
+                    {filas.length === 0 && <FilaVacia cols={7} texto="No hay cuotas vencidas. ¡Todos al día!" />}
+                    {filas.map((f) => (
+                        <tr key={f.id_cuota}>
+                            <td>{f.unidad}</td><td>{f.propietario || "-"}</td><td>{f.telefono || "-"}</td>
+                            <td>{periodoTexto(f.periodo)}</td><td>{fechaTexto(f.fecha_vencimiento)}</td>
+                            <td className="num">{f.dias_atraso}</td><td className="num">{Number(f.saldo).toFixed(2)}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+/** RF-007 Actualizar datos de perfil (todos los roles) */
+function Perfil() {
+    const [p] = useDatos("/api/perfil");
+    const [f, setF] = useState(null);
+    const [res, setRes] = useState(null);
+    useEffect(() => { if (p) setF({ ...p, contrasena_actual: "", contrasena_nueva: "" }); }, [p]);
+    if (!f) return <Cargando />;
+    const c = (k) => (e) => setF({ ...f, [k]: e.target.value });
+    const guardar = async (e) => {
+        e.preventDefault();
+        try {
+            const r = await API.put("/api/perfil", f);
+            setRes({ ok: true, titulo: "¡Perfil actualizado!", mensaje: r.mensaje });
+            setF({ ...f, contrasena_actual: "", contrasena_nueva: "" });
+        } catch (er) { setRes({ ok: false, mensaje: er.message }); }
+    };
+    return (
+        <div className="card">
+            <h2>Mi perfil</h2>
+            <Resultado res={res} />
+            <form onSubmit={guardar}>
+                <div className="grid">
+                    <Campo label="Nombres y apellidos:"><input disabled value={f.nombre + " " + f.apellido} /></Campo>
+                    <Campo label="DNI:"><input disabled value={f.dni} /></Campo>
+                    <Campo label="Rol:"><input disabled value={f.nombre_rol} /></Campo>
+                    <Campo label="Unidad:"><input disabled value={f.unidad || "-"} /></Campo>
+                    <Campo label="Correo electrónico:"><input value={f.correo} onChange={c("correo")} /></Campo>
+                    <Campo label="Teléfono / Celular:"><input value={f.telefono || ""} maxLength="9" onChange={c("telefono")} /></Campo>
+                    <Campo label="Dirección:" className="full"><input value={f.direccion || ""} onChange={c("direccion")} /></Campo>
+                    <Campo label="Contraseña actual:" ayuda="Solo si desea cambiar su contraseña."><input type="password" value={f.contrasena_actual} onChange={c("contrasena_actual")} /></Campo>
+                    <Campo label="Nueva contraseña:"><input type="password" value={f.contrasena_nueva} onChange={c("contrasena_nueva")} /></Campo>
+                </div>
+                <button className="btn verde bloque">Guardar cambios</button>
+            </form>
+        </div>
+    );
+}
+
+
+// =============================================================
+//  APP PRINCIPAL: Login (RF-003), Cerrar sesion (RF-004),
+//  Recuperar contrasena (RF-005) y navegacion por rol
+// =============================================================
+
+function Login({ alEntrar }) {
+    const [correo, setCorreo] = useState("");
+    const [contrasena, setContrasena] = useState("");
+    const [recuperar, setRecuperar] = useState(false);
+    const [res, setRes] = useState(null);
+
+    const entrar = async (e) => {
+        e.preventDefault();
+        setRes(null);
+        try {
+            const r = await API.post("/api/auth/login", { correo, contrasena });
+            sessionStorage.setItem("token", r.token);
+            sessionStorage.setItem("usuario", JSON.stringify(r.usuario));
+            alEntrar(r.usuario);
+        } catch (er) {
+            setRes({ ok: false, titulo: "¡Credenciales Incorrectas!", mensaje: er.message });
+        }
+    };
+
+    const enviarRecuperacion = (e) => {
+        e.preventDefault();
+        if (!correo.trim()) {
+            setRes({ ok: false, titulo: "Ingrese su correo", mensaje: "Debe ingresar el correo electrónico de su cuenta." });
+            return;
+        }
+        // Flujo alternativo RF-005: mensaje generico sin revelar si el correo existe
+        setRes({
+            ok: true,
+            titulo: "¡Solicitud procesada!",
+            mensaje: "Si el correo ingresado corresponde a una cuenta registrada, recibirá las instrucciones para restablecer su contraseña."
+        });
+    };
+
+    const rapido = (c, p) => { setCorreo(c); setContrasena(p); setRes(null); };
+
+    return (
+        <div>
+            <div className="header">
+                <h1>SISTEMA WEB "EDIFICIO LA CRUCETA"</h1>
+                <div className="sub">Sistema de Cobro de Cuotas de Mantenimiento</div>
+            </div>
+            <div className="card login">
+                {recuperar ? (
+                    <form onSubmit={enviarRecuperacion}>
+                        <h2>Recuperar contraseña (RF-005)</h2>
+                        <Resultado res={res} />
+                        <Campo label="Correo Electrónico Registrado:">
+                            <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="correo@ejemplo.com" />
+                        </Campo>
+                        <button className="btn bloque">Enviar instrucciones</button>
+                        <button type="button" className="btn blanco bloque" style={{ marginTop: 8 }}
+                            onClick={() => { setRecuperar(false); setRes(null); }}>Volver a iniciar sesión</button>
+                    </form>
+                ) : (
+                    <form onSubmit={entrar}>
+                        <h2>Iniciar Sesión (RF-003)</h2>
+                        <Resultado res={res} />
+                        <Campo label="Correo Electrónico / Usuario:">
+                            <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="admin@cruceta.com" />
+                        </Campo>
+                        <div style={{ marginTop: 12 }}>
+                            <Campo label="Contraseña:">
+                                <input type="password" value={contrasena} onChange={(e) => setContrasena(e.target.value)} placeholder="••••••••" />
+                            </Campo>
+                        </div>
+                        <button className="btn bloque">Ingresar al Sistema</button>
+                        <button type="button" className="btn blanco bloque" style={{ marginTop: 8 }}
+                            onClick={() => { setRecuperar(true); setRes(null); }}>¿Olvidó su contraseña?</button>
+
+                        <div className="demo">
+                            <b>Cuentas de prueba predefinidas (clic para autocompletar):</b>
+                            <div className="acciones" style={{ marginTop: 6 }}>
+                                <button type="button" className="btn chico" onClick={() => rapido("admin@cruceta.com", "admin123")}>
+                                    Administrador (La Directiva)
+                                </button>
+                                <button type="button" className="btn chico verde" onClick={() => rapido("maria.lozano@email.com", "123456")}>
+                                    María Lozano (Block 73 - 501)
+                                </button>
+                                <button type="button" className="btn chico verde" onClick={() => rapido("carlos.mendoza@email.com", "123456")}>
+                                    Carlos Mendoza (Block 73 - 302)
+                                </button>
+                                <button type="button" className="btn chico gris" onClick={() => rapido("miguel.chavez@email.com", "123456")}>
+                                    Miguel Chávez (Block 73 - 203 Moroso)
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function App() {
+    const guardado = () => {
+        try { return JSON.parse(sessionStorage.getItem("usuario")); } catch (e) { return null; }
+    };
+    const [usuario, setUsuario] = useState(guardado);
+    const [vista, setVista] = useState(usuario && usuario.rol === "ADMINISTRADOR" ? "dashboard" : "estado");
+    const [params, setParams] = useState(null);
+
+    useEffect(() => {
+        const limpiar = () => setUsuario(null);
+        window.addEventListener("sesion-expirada", limpiar);
+        return () => window.removeEventListener("sesion-expirada", limpiar);
+    }, []);
+
+    if (!usuario) return <Login alEntrar={(u) => {
+        setUsuario(u);
+        setVista(u.rol === "ADMINISTRADOR" ? "dashboard" : "estado");
+    }} />;
+
+    const esAdmin = usuario.rol === "ADMINISTRADOR";
+    const ir = (v, p) => { setParams(p || null); setVista(v); };
+
+    const salir = async () => {
+        try { await API.post("/api/auth/logout"); } catch (e) { /* ignorar */ }
+        sessionStorage.clear();
+        setUsuario(null);
+    };
+
+    const menu = esAdmin ? [
+        ["dashboard", "Dashboard"],
+        ["generar", "Generar cuota mensual"],
+        ["cuotas", "Cuotas emitidas"],
+        ["pagos", "Pagos y validación"],
+        ["registrar-pago", "Registrar pago"],
+        ["constancias", "Constancias de pago"],
+        ["estado", "Estado de cuenta"],
+        ["morosidad", "Morosidad"],
+        ["conceptos", "Conceptos de cobro"],
+        ["unidades", "Departamentos (Unidades)"],
+        ["usuarios", "Propietarios / Usuarios"],
+        ["perfil", "Mi perfil"],
+    ] : [
+        ["estado", "Mi estado de cuenta"],
+        ["cuotas", "Mis cuotas"],
+        ["registrar-pago", "Registrar pago"],
+        ["pagos", "Mis pagos realizados"],
+        ["constancias", "Mis constancias"],
+        ["perfil", "Mi perfil"],
+    ];
+
+    return (
+        <div>
+            <div className="header">
+                <h1>SISTEMA WEB "EDIFICIO LA CRUCETA"</h1>
+                <div className="sub">Cobro y Gestión de Cuotas de Mantenimiento</div>
+                <div className="user">
+                    Usuario: <b>{usuario.nombreCompleto}</b> ({usuario.rol})
+                    {usuario.unidad ? ` — Departamento: ${usuario.unidad}` : ""}
+                </div>
+            </div>
+            <div className="layout">
+                <div className="sidebar">
+                    {menu.map(([id, texto]) => (
+                        <button key={id} className={vista === id ? "activo" : ""} onClick={() => ir(id)}>
+                            {texto}
+                        </button>
+                    ))}
+                    <button className="salir" onClick={salir}>Cerrar sesión</button>
+                </div>
+                <div className="main">
+                    {vista === "dashboard" && <Dashboard ir={ir} />}
+                    {vista === "generar" && <GenerarCuota />}
+                    {vista === "cuotas" && <ListaCuotas usuario={usuario} ir={ir} />}
+                    {vista === "estado" && <EstadoCuenta usuario={usuario} ir={ir} />}
+                    {vista === "registrar-pago" && <RegistrarPago usuario={usuario} params={params} ir={ir} />}
+                    {vista === "pagos" && <ListaPagos usuario={usuario} />}
+                    {vista === "constancias" && <Constancias usuario={usuario} />}
+                    {vista === "morosidad" && <Morosidad />}
+                    {vista === "conceptos" && <Conceptos />}
+                    {vista === "unidades" && <Unidades />}
+                    {vista === "usuarios" && <Usuarios />}
+                    {vista === "perfil" && <Perfil />}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+    </script>
+</body>
+</html>

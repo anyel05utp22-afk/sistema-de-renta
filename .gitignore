@@ -1,0 +1,22 @@
+# Compilación Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+
+# Logs
+*.log
+
+# Entornos y SO
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Subidas en tiempo de ejecución (conservando únicamente los archivos semilla iniciales)
+uploads/*
+!uploads/seed/
