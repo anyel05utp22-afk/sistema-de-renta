@@ -23,7 +23,7 @@ public class UsuarioController {
             SELECT u.id_usuario, u.dni, u.nombre, u.apellido,
                    DATE_FORMAT(u.fecha_nacimiento, '%Y-%m-%d') AS fecha_nacimiento,
                    u.telefono, u.correo, u.direccion, u.id_rol, r.nombre_rol, u.id_unidad,
-                   CONCAT(un.bloque, ' - ', un.numero_unidad) AS unidad, u.estado_cuenta
+                   CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad, u.estado_cuenta
             FROM usuario u JOIN rol r ON r.id_rol = u.id_rol
             LEFT JOIN unidad un ON un.id_unidad = u.id_unidad
             """;

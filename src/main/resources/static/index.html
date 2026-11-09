@@ -147,7 +147,7 @@ const COLOR_ESTADO = {
     PENDIENTE: "b-amarillo", EN_REVISION: "b-amarillo",
     VENCIDA: "b-rojo", RECHAZADO: "b-rojo", INACTIVO: "b-gris", INACTIVA: "b-gris",
 };
-const TEXTO_ESTADO = { EN_REVISION: "En Revisión", VALIDADO: "Verificado" };
+const TEXTO_ESTADO = { EN_REVISION: "Pagado en revisión", VALIDADO: "Verificado" };
 
 function Estado({ valor }) {
     if (!valor) return null;
@@ -251,23 +251,25 @@ function GenerarCuota() {
             </div>
 
             <h3>Gastos del mes ({periodoTexto(periodo)})</h3>
-            <table>
-                <thead><tr><th>Concepto</th><th>Tipo</th><th className="num">Monto base</th><th style={{ width: 180 }}>Gasto real del mes (S/.)</th></tr></thead>
-                <tbody>
-                    {conceptos.map((c) => (
-                        <tr key={c.id_concepto}>
-                            <td>{c.nombre_concepto}</td>
-                            <td>{c.tipo_concepto}</td>
-                            <td className="num">{soles(c.monto_base)}</td>
-                            <td>
-                                <input type="number" step="0.01" min="0" value={gastos[c.id_concepto] ?? ""}
-                                    className={gastos[c.id_concepto] === "" ? "invalido" : ""}
-                                    onChange={(e) => { setGastos({ ...gastos, [c.id_concepto]: e.target.value }); setCalculo(null); }} />
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
+            <div className="tabla-responsive">
+                <table>
+                    <thead><tr><th>Concepto</th><th>Tipo</th><th className="num">Monto base</th><th style={{ width: 180 }}>Gasto real del mes (S/.)</th></tr></thead>
+                    <tbody>
+                        {conceptos.map((c) => (
+                            <tr key={c.id_concepto}>
+                                <td>{c.nombre_concepto}</td>
+                                <td>{c.tipo_concepto}</td>
+                                <td className="num">{soles(c.monto_base)}</td>
+                                <td>
+                                    <input type="number" step="0.01" min="0" value={gastos[c.id_concepto] ?? ""}
+                                        className={gastos[c.id_concepto] === "" ? "invalido" : ""}
+                                        onChange={(e) => { setGastos({ ...gastos, [c.id_concepto]: e.target.value }); setCalculo(null); }} />
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
 
             {calculo && (
                 <div className="kpis" style={{ marginTop: 16 }}>
@@ -294,6 +296,7 @@ function ListaCuotas({ usuario, ir }) {
     const [periodos] = useDatos("/api/cuotas/periodos");
     const [periodo, setPeriodo] = useState("");
     const [estado, setEstado] = useState("");
+    const [busqueda, setBusqueda] = useState("");
     const [cuotas, recargar, error] = useDatos(`/api/cuotas?periodo=${periodo}&estado=${estado}`);
     const [seleccion, setSeleccion] = useState(null); // {id, modo: 'aviso' | 'editar'}
     const [res, setRes] = useState(null);
@@ -311,11 +314,28 @@ function ListaCuotas({ usuario, ir }) {
     if (seleccion && seleccion.modo === "editar")
         return <EditarCuota idCuota={seleccion.id} volver={() => { setSeleccion(null); recargar(); }} />;
 
+    const cuotasFiltradas = (cuotas || []).filter((c) => {
+        if (!busqueda.trim()) return true;
+        const b = busqueda.toLowerCase();
+        return (c.propietario && c.propietario.toLowerCase().includes(b)) ||
+               (c.unidad && c.unidad.toLowerCase().includes(b));
+    });
+
     return (
         <div className="card">
             <h2>{esAdmin ? "Cuotas de mantenimiento" : "Mis cuotas de mantenimiento"}</h2>
             <Resultado res={res} />
             <div className="barra">
+                {esAdmin && (
+                    <Campo label="Buscar por nombre:">
+                        <input
+                            type="text"
+                            placeholder="Nombre del propietario..."
+                            value={busqueda}
+                            onChange={(e) => setBusqueda(e.target.value)}
+                        />
+                    </Campo>
+                )}
                 <Campo label="Periodo">
                     <select value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
                         <option value="">Todos</option>
@@ -333,40 +353,45 @@ function ListaCuotas({ usuario, ir }) {
                 {esAdmin && <button className="btn gris" onClick={detectar}>Detectar cuotas vencidas</button>}
             </div>
             {!cuotas ? <Cargando error={error} /> : (
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Periodo</th>{esAdmin && <th>Unidad</th>}{esAdmin && <th>Propietario</th>}
-                            <th>Vence</th><th className="num">Monto</th><th className="num">Pagado</th>
-                            <th className="num">Saldo</th><th>Estado</th><th>Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {cuotas.length === 0 && <FilaVacia cols={9} />}
-                        {cuotas.map((c) => (
-                            <tr key={c.id_cuota}>
-                                <td>{periodoTexto(c.periodo)}</td>
-                                {esAdmin && <td>{c.unidad}</td>}
-                                {esAdmin && <td>{c.propietario || "-"}</td>}
-                                <td>{fechaTexto(c.fecha_vencimiento)}</td>
-                                <td className="num">{Number(c.monto_total).toFixed(2)}</td>
-                                <td className="num">{Number(c.monto_pagado).toFixed(2)}</td>
-                                <td className="num">{Number(c.saldo).toFixed(2)}</td>
-                                <td>
-                                    <Estado valor={c.estado_cuota} />
-                                    {Number(c.monto_en_revision) > 0 && <> <Estado valor="EN_REVISION" /></>}
-                                </td>
-                                <td className="acciones">
-                                    <button className="btn chico blanco" onClick={() => setSeleccion({ id: c.id_cuota, modo: "aviso" })}>Aviso</button>
-                                    {esAdmin && c.estado_cuota !== "PAGADA" && Number(c.monto_pagado) === 0 &&
-                                        <button className="btn chico gris" onClick={() => setSeleccion({ id: c.id_cuota, modo: "editar" })}>Editar</button>}
-                                    {c.estado_cuota !== "PAGADA" && Number(c.saldo) - Number(c.monto_en_revision) > 0 &&
-                                        <button className="btn chico verde" onClick={() => ir("registrar-pago", { idCuota: c.id_cuota })}>Pagar</button>}
-                                </td>
+                <div className="tabla-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Periodo</th>{esAdmin && <th>Unidad</th>}{esAdmin && <th>Propietario</th>}
+                                <th>Vence</th><th className="num">Monto</th><th className="num">Pagado</th>
+                                <th className="num">Saldo</th><th>Estado</th><th>Acciones</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            {cuotasFiltradas.length === 0 && <FilaVacia cols={9} />}
+                            {cuotasFiltradas.map((c) => (
+                                <tr key={c.id_cuota}>
+                                    <td>{periodoTexto(c.periodo)}</td>
+                                    {esAdmin && <td>{c.unidad}</td>}
+                                    {esAdmin && <td>{c.propietario || "-"}</td>}
+                                    <td>{fechaTexto(c.fecha_vencimiento)}</td>
+                                    <td className="num">{Number(c.monto_total).toFixed(2)}</td>
+                                    <td className="num">{Number(c.monto_pagado).toFixed(2)}</td>
+                                    <td className="num">{Number(c.saldo).toFixed(2)}</td>
+                                    <td>
+                                        {Number(c.monto_en_revision) > 0 ? (
+                                            <span className="badge b-amarillo">Pagado en revisión</span>
+                                        ) : (
+                                            <Estado valor={c.estado_cuota} />
+                                        )}
+                                    </td>
+                                    <td className="acciones">
+                                        <button className="btn chico blanco" onClick={() => setSeleccion({ id: c.id_cuota, modo: "aviso" })}>Aviso</button>
+                                        {esAdmin && c.estado_cuota !== "PAGADA" && Number(c.monto_pagado) === 0 &&
+                                            <button className="btn chico gris" onClick={() => setSeleccion({ id: c.id_cuota, modo: "editar" })}>Editar</button>}
+                                        {c.estado_cuota !== "PAGADA" && Number(c.saldo) - Number(c.monto_en_revision) > 0 &&
+                                            <button className="btn chico verde" onClick={() => ir("registrar-pago", { idCuota: c.id_cuota })}>Pagar</button>}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             )}
         </div>
     );
@@ -391,19 +416,21 @@ function AvisoCobro({ idCuota, volver }) {
                     <div><b>Propietario:</b> {c.propietario || "-"}</div>
                     <div><b>Unidad:</b> {c.unidad}</div>
                     <div><b>Periodo:</b> {periodoTexto(c.periodo)}</div>
-                    <div><b>Estado:</b> <Estado valor={c.estado_cuota} /></div>
+                    <div><b>Estado:</b> {Number(c.monto_en_revision) > 0 ? <span className="badge b-amarillo">Pagado en revisión</span> : <Estado valor={c.estado_cuota} />}</div>
                     <div><b>Fecha de emisión:</b> {fechaTexto(c.fecha_emision)}</div>
                     <div><b>Fecha de vencimiento:</b> {fechaTexto(c.fecha_vencimiento)}</div>
                 </div>
                 <h3>Detalle de gastos del edificio (parte que corresponde al departamento)</h3>
-                <table>
-                    <thead><tr><th>Concepto</th><th className="num">Monto (S/.)</th></tr></thead>
-                    <tbody>
-                        {c.detalles.map((d) => (
-                            <tr key={d.id_concepto}><td>{d.nombre_concepto}</td><td className="num">{Number(d.monto_concepto).toFixed(2)}</td></tr>
-                        ))}
-                    </tbody>
-                </table>
+                <div className="tabla-responsive">
+                    <table>
+                        <thead><tr><th>Concepto</th><th className="num">Monto (S/.)</th></tr></thead>
+                        <tbody>
+                            {c.detalles.map((d) => (
+                                <tr key={d.id_concepto}><td>{d.nombre_concepto}</td><td className="num">{Number(d.monto_concepto).toFixed(2)}</td></tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
                 <div className="total">Total cuota: {soles(c.monto_total)}</div>
                 <div className="total" style={{ fontSize: 15 }}>Pagado: {soles(c.monto_pagado)} &nbsp; | &nbsp; Saldo: {soles(c.saldo)}</div>
                 <p className="ayuda">Pague en efectivo a La Directiva o mediante Yape y registre su comprobante en el sistema antes de la fecha de vencimiento.</p>
@@ -441,18 +468,20 @@ function EditarCuota({ idCuota, volver }) {
                 <Campo label="Fecha de vencimiento:"><input type="date" value={venc} onChange={(e) => setVenc(e.target.value)} /></Campo>
                 <Campo label="Total de la cuota:"><input value={soles(total)} disabled /></Campo>
             </div>
-            <table style={{ marginTop: 14 }}>
-                <thead><tr><th>Concepto</th><th style={{ width: 180 }}>Monto (S/.)</th></tr></thead>
-                <tbody>
-                    {detalles.map((d, i) => (
-                        <tr key={d.id_concepto}>
-                            <td>{d.nombre_concepto}</td>
-                            <td><input type="number" step="0.01" value={d.monto_concepto}
-                                onChange={(e) => { const n = [...detalles]; n[i] = { ...d, monto_concepto: e.target.value }; setDetalles(n); }} /></td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
+            <div className="tabla-responsive" style={{ marginTop: 14 }}>
+                <table>
+                    <thead><tr><th>Concepto</th><th style={{ width: 180 }}>Monto (S/.)</th></tr></thead>
+                    <tbody>
+                        {detalles.map((d, i) => (
+                            <tr key={d.id_concepto}>
+                                <td>{d.nombre_concepto}</td>
+                                <td><input type="number" step="0.01" value={d.monto_concepto}
+                                    onChange={(e) => { const n = [...detalles]; n[i] = { ...d, monto_concepto: e.target.value }; setDetalles(n); }} /></td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
             <button className="btn verde bloque" onClick={guardar}>Guardar cambios</button>
         </div>
     );
@@ -463,17 +492,34 @@ function EstadoCuenta({ usuario, ir }) {
     const esAdmin = usuario.rol === "ADMINISTRADOR";
     const [unidades] = useDatos(esAdmin ? "/api/unidades" : null);
     const [idUnidad, setIdUnidad] = useState(esAdmin ? "" : usuario.idUnidad);
+    const [busqueda, setBusqueda] = useState("");
     const [ec, , error] = useDatos(idUnidad ? `/api/estado-cuenta?idUnidad=${idUnidad}` : null);
+
+    const unidadesFiltradas = (unidades || []).filter((u) => {
+        if (!busqueda.trim()) return true;
+        const b = busqueda.toLowerCase();
+        return (u.propietario && u.propietario.toLowerCase().includes(b)) ||
+               (u.unidad && u.unidad.toLowerCase().includes(b)) ||
+               (u.numero_unidad && u.numero_unidad.includes(b));
+    });
 
     return (
         <div className="card">
             <h2>Estado de cuenta</h2>
             {esAdmin && (
                 <div className="barra">
-                    <Campo label="Departamento">
+                    <Campo label="Buscar por nombre:">
+                        <input
+                            type="text"
+                            placeholder="Nombre del propietario..."
+                            value={busqueda}
+                            onChange={(e) => setBusqueda(e.target.value)}
+                        />
+                    </Campo>
+                    <Campo label="Departamento / Unidad">
                         <select value={idUnidad} onChange={(e) => setIdUnidad(e.target.value)}>
                             <option value="">-- Seleccione --</option>
-                            {(unidades || []).map((u) => <option key={u.id_unidad} value={u.id_unidad}>{u.unidad} {u.propietario ? "— " + u.propietario : ""}</option>)}
+                            {unidadesFiltradas.map((u) => <option key={u.id_unidad} value={u.id_unidad}>{u.unidad} {u.propietario ? "— " + u.propietario : ""}</option>)}
                         </select>
                     </Campo>
                 </div>
@@ -493,23 +539,31 @@ function EstadoCuenta({ usuario, ir }) {
                             </div>
                         </div>
                         <h3>Detalle de Movimientos y Cuotas:</h3>
-                        <table>
-                            <thead><tr><th>Fecha</th><th>Concepto</th><th className="num">Cargo (S/.)</th><th className="num">Abono (S/.)</th><th>Estado</th>{!esAdmin && <th></th>}</tr></thead>
-                            <tbody>
-                                {ec.cuotas.length === 0 && <FilaVacia cols={6} />}
-                                {ec.cuotas.map((c) => (
-                                    <tr key={c.id_cuota}>
-                                        <td>{fechaTexto(c.fecha_emision)}</td>
-                                        <td>Cuota Mantenimiento - {periodoTexto(c.periodo)}</td>
-                                        <td className="num">{Number(c.monto_total).toFixed(2)}</td>
-                                        <td className="num">{Number(c.monto_pagado).toFixed(2)}</td>
-                                        <td><Estado valor={c.estado_cuota} />{Number(c.monto_en_revision) > 0 && <> <Estado valor="EN_REVISION" /></>}</td>
-                                        {!esAdmin && <td>{c.estado_cuota !== "PAGADA" && Number(c.saldo) - Number(c.monto_en_revision) > 0 &&
-                                            <button className="btn chico verde" onClick={() => ir("registrar-pago", { idCuota: c.id_cuota })}>Pagar</button>}</td>}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                        <div className="tabla-responsive">
+                            <table>
+                                <thead><tr><th>Fecha</th><th>Concepto</th><th className="num">Cargo (S/.)</th><th className="num">Abono (S/.)</th><th>Estado</th>{!esAdmin && <th></th>}</tr></thead>
+                                <tbody>
+                                    {ec.cuotas.length === 0 && <FilaVacia cols={6} />}
+                                    {ec.cuotas.map((c) => (
+                                        <tr key={c.id_cuota}>
+                                            <td>{fechaTexto(c.fecha_emision)}</td>
+                                            <td>Cuota Mantenimiento - {periodoTexto(c.periodo)}</td>
+                                            <td className="num">{Number(c.monto_total).toFixed(2)}</td>
+                                            <td className="num">{Number(c.monto_pagado).toFixed(2)}</td>
+                                            <td>
+                                                {Number(c.monto_en_revision) > 0 ? (
+                                                    <span className="badge b-amarillo">Pagado en revisión</span>
+                                                ) : (
+                                                    <Estado valor={c.estado_cuota} />
+                                                )}
+                                            </td>
+                                            {!esAdmin && <td>{c.estado_cuota !== "PAGADA" && Number(c.saldo) - Number(c.monto_en_revision) > 0 &&
+                                                <button className="btn chico verde" onClick={() => ir("registrar-pago", { idCuota: c.id_cuota })}>Pagar</button>}</td>}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </>
                 )}
         </div>
@@ -655,6 +709,7 @@ function RegistrarPago({ usuario, params, ir }) {
 function ListaPagos({ usuario }) {
     const esAdmin = usuario.rol === "ADMINISTRADOR";
     const [estado, setEstado] = useState(esAdmin ? "EN_REVISION" : "");
+    const [busqueda, setBusqueda] = useState("");
     const [pagos, recargar, error] = useDatos(`/api/pagos?estado=${estado}`);
     const [rechazo, setRechazo] = useState(null); // {id, motivo}
     const [res, setRes] = useState(null);
@@ -681,6 +736,14 @@ function ListaPagos({ usuario }) {
         } catch (e) { setRes({ ok: false, mensaje: e.message }); }
     };
 
+    const pagosFiltrados = (pagos || []).filter((p) => {
+        if (!busqueda.trim()) return true;
+        const b = busqueda.toLowerCase();
+        return (p.usuario && p.usuario.toLowerCase().includes(b)) ||
+               (p.unidad && p.unidad.toLowerCase().includes(b)) ||
+               (p.nro_operacion && p.nro_operacion.toLowerCase().includes(b));
+    });
+
     return (
         <div className="card">
             <h2>{esAdmin ? "Pagos registrados y validación de comprobantes" : "Mis pagos realizados"}</h2>
@@ -700,49 +763,59 @@ function ListaPagos({ usuario }) {
                 </Alerta>
             )}
             <div className="barra">
+                <Campo label="Buscar por nombre:">
+                    <input
+                        type="text"
+                        placeholder="Nombre de propietario / residente..."
+                        value={busqueda}
+                        onChange={(e) => setBusqueda(e.target.value)}
+                    />
+                </Campo>
                 <Campo label="Estado del pago">
                     <select value={estado} onChange={(e) => setEstado(e.target.value)}>
                         <option value="">Todos</option>
-                        <option value="EN_REVISION">En revisión</option>
+                        <option value="EN_REVISION">Pagado en revisión</option>
                         <option value="VALIDADO">Validado</option>
                         <option value="RECHAZADO">Rechazado</option>
                     </select>
                 </Campo>
             </div>
             {!pagos ? <Cargando error={error} /> : (
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Fecha Operación</th>{esAdmin && <th>Unidad</th>}<th>Concepto</th><th>N° Operación / Voucher</th>
-                            <th>Método</th><th className="num">Monto (S/.)</th><th>Estado</th><th>Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {pagos.length === 0 && <FilaVacia cols={8} />}
-                        {pagos.map((p) => (
-                            <tr key={p.id_pago}>
-                                <td>{fechaTexto(p.fecha_pago)}</td>
-                                {esAdmin && <td>{p.unidad}<div className="ayuda">{p.usuario}</div></td>}
-                                <td>Cuota Mantenimiento - {periodoTexto(p.periodo)}</td>
-                                <td>{p.nro_operacion || "-"}</td>
-                                <td>{p.metodo_pago || "No especificado"}</td>
-                                <td className="num">{Number(p.monto_pagado).toFixed(2)}</td>
-                                <td>
-                                    <Estado valor={p.estado_pago} />
-                                    {p.observacion && <div className="ayuda">Motivo: {p.observacion}</div>}
-                                </td>
-                                <td className="acciones">
-                                    {p.id_comprobante && <a className="btn chico blanco" href={API.urlComprobante(p.id_comprobante)} target="_blank">Comprobante</a>}
-                                    {p.numero_recibo && <span className="badge b-azul">{p.numero_recibo}</span>}
-                                    {esAdmin && p.estado_pago === "EN_REVISION" && <>
-                                        <button className="btn chico verde" onClick={() => validar(p)}>Validar</button>
-                                        <button className="btn chico rojo" onClick={() => setRechazo({ id: p.id_pago, motivo: "" })}>Rechazar</button>
-                                    </>}
-                                </td>
+                <div className="tabla-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fecha Operación</th>{esAdmin && <th>Unidad</th>}<th>Concepto</th><th>N° Operación / Voucher</th>
+                                <th>Método</th><th className="num">Monto (S/.)</th><th>Estado</th><th>Acciones</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            {pagosFiltrados.length === 0 && <FilaVacia cols={8} />}
+                            {pagosFiltrados.map((p) => (
+                                <tr key={p.id_pago}>
+                                    <td>{fechaTexto(p.fecha_pago)}</td>
+                                    {esAdmin && <td>{p.unidad}<div className="ayuda">{p.usuario}</div></td>}
+                                    <td>Cuota Mantenimiento - {periodoTexto(p.periodo)}</td>
+                                    <td>{p.nro_operacion || "-"}</td>
+                                    <td>{p.metodo_pago || "No especificado"}</td>
+                                    <td className="num">{Number(p.monto_pagado).toFixed(2)}</td>
+                                    <td>
+                                        <Estado valor={p.estado_pago} />
+                                        {p.observacion && <div className="ayuda">Motivo: {p.observacion}</div>}
+                                    </td>
+                                    <td className="acciones">
+                                        {p.id_comprobante && <a className="btn chico blanco" href={API.urlComprobante(p.id_comprobante)} target="_blank">Comprobante</a>}
+                                        {p.numero_recibo && <span className="badge b-azul">{p.numero_recibo}</span>}
+                                        {esAdmin && p.estado_pago === "EN_REVISION" && <>
+                                            <button className="btn chico verde" onClick={() => validar(p)}>Validar</button>
+                                            <button className="btn chico rojo" onClick={() => setRechazo({ id: p.id_pago, motivo: "" })}>Rechazar</button>
+                                        </>}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             )}
         </div>
     );
@@ -752,6 +825,7 @@ function ListaPagos({ usuario }) {
 function Constancias({ usuario }) {
     const esAdmin = usuario.rol === "ADMINISTRADOR";
     const [recibos, , error] = useDatos("/api/recibos");
+    const [busqueda, setBusqueda] = useState("");
     const [ver, setVer] = useState(null);
 
     if (ver) {
@@ -770,7 +844,7 @@ function Constancias({ usuario }) {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div style={{ textAlign: "center", flex: 1 }}>
                             <h2 style={{ margin: 0, color: "#1e3a8a", fontSize: 22, letterSpacing: 1 }}>RESIDENCIAL LA CRUCETA</h2>
-                            <div style={{ color: "#1e3a8a", fontWeight: 700, fontSize: 17, marginTop: 2 }}>BLOCK 73</div>
+                            <div style={{ color: "#1e3a8a", fontWeight: 700, fontSize: 17, marginTop: 2 }}>SURCO</div>
                         </div>
                         <div style={{ fontSize: 20, fontWeight: 700, color: "#334155", minWidth: 50, textAlign: "right" }}>
                             {dpto}
@@ -821,26 +895,46 @@ function Constancias({ usuario }) {
         );
     }
 
+    const recibosFiltrados = (recibos || []).filter((r) => {
+        if (!busqueda.trim()) return true;
+        const b = busqueda.toLowerCase();
+        return (r.usuario && r.usuario.toLowerCase().includes(b)) ||
+               (r.unidad && r.unidad.toLowerCase().includes(b)) ||
+               (r.numero_recibo && r.numero_recibo.toLowerCase().includes(b));
+    });
+
     return (
         <div className="card">
             <h2>Constancias de pago</h2>
+            <div className="barra">
+                <Campo label="Buscar por nombre:">
+                    <input
+                        type="text"
+                        placeholder="Nombre del propietario o residente..."
+                        value={busqueda}
+                        onChange={(e) => setBusqueda(e.target.value)}
+                    />
+                </Campo>
+            </div>
             {!recibos ? <Cargando error={error} /> : (
-                <table>
-                    <thead><tr><th>N° Constancia</th><th>Emisión</th>{esAdmin && <th>Unidad</th>}<th>Concepto</th><th className="num">Monto (S/.)</th><th></th></tr></thead>
-                    <tbody>
-                        {recibos.length === 0 && <FilaVacia cols={6} />}
-                        {recibos.map((r) => (
-                            <tr key={r.id_recibo}>
-                                <td>{r.numero_recibo}</td>
-                                <td>{fechaTexto(r.fecha_emision)}</td>
-                                {esAdmin && <td>{r.unidad}</td>}
-                                <td>Cuota Mantenimiento - {periodoTexto(r.periodo)}</td>
-                                <td className="num">{Number(r.monto_pagado).toFixed(2)}</td>
-                                <td><button className="btn chico blanco" onClick={() => setVer(r)}>Ver / Imprimir</button></td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+                <div className="tabla-responsive">
+                    <table>
+                        <thead><tr><th>N° Constancia</th><th>Emisión</th>{esAdmin && <th>Unidad</th>}<th>Concepto</th><th className="num">Monto (S/.)</th><th></th></tr></thead>
+                        <tbody>
+                            {recibosFiltrados.length === 0 && <FilaVacia cols={6} />}
+                            {recibosFiltrados.map((r) => (
+                                <tr key={r.id_recibo}>
+                                    <td>{r.numero_recibo}</td>
+                                    <td>{fechaTexto(r.fecha_emision)}</td>
+                                    {esAdmin && <td>{r.unidad}</td>}
+                                    <td>Cuota Mantenimiento - {periodoTexto(r.periodo)}</td>
+                                    <td className="num">{Number(r.monto_pagado).toFixed(2)}</td>
+                                    <td><button className="btn chico blanco" onClick={() => setVer(r)}>Ver / Imprimir</button></td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             )}
         </div>
     );
@@ -899,6 +993,7 @@ function Usuarios() {
     const [unidades] = useDatos("/api/unidades");
     const vacio = { nombre: "", apellido: "", dni: "", id_unidad: "", id_rol: "2", correo: "", telefono: "", fecha_nacimiento: "", direccion: "", contrasena: "" };
     const [f, setF] = useState(vacio);
+    const [busqueda, setBusqueda] = useState("");
     const [res, setRes] = useState(null);
     const c = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
@@ -927,6 +1022,15 @@ function Usuarios() {
             if (er.status !== 409) setRes({ ok: false, mensaje: er.message });
         }
     };
+
+    const usuariosFiltrados = (usuarios || []).filter((u) => {
+        if (!busqueda.trim()) return true;
+        const b = busqueda.toLowerCase();
+        return (u.nombre && u.nombre.toLowerCase().includes(b)) ||
+               (u.apellido && u.apellido.toLowerCase().includes(b)) ||
+               (u.dni && u.dni.includes(b)) ||
+               (u.unidad && u.unidad.toLowerCase().includes(b));
+    });
 
     return (
         <>
@@ -960,32 +1064,45 @@ function Usuarios() {
             </div>
             <div className="card">
                 <h2>Usuarios del sistema</h2>
+                <div className="barra">
+                    <Campo label="Buscar por nombre o DNI:">
+                        <input
+                            type="text"
+                            placeholder="Nombre, apellido o DNI..."
+                            value={busqueda}
+                            onChange={(e) => setBusqueda(e.target.value)}
+                        />
+                    </Campo>
+                </div>
                 {!usuarios ? <Cargando error={error} /> : (
-                    <table>
-                        <thead><tr><th>DNI</th><th>Nombre</th><th>Unidad</th><th>Correo</th><th>Teléfono</th><th>Rol</th><th>Estado</th><th></th></tr></thead>
-                        <tbody>
-                            {usuarios.map((u) => (
-                                <tr key={u.id_usuario}>
-                                    <td>{u.dni}</td>
-                                    <td>{u.nombre} {u.apellido}</td>
-                                    <td>{u.unidad || "-"}</td>
-                                    <td>{u.correo}</td>
-                                    <td>{u.telefono}</td>
-                                    <td>
-                                        <select value={u.id_rol} onChange={(e) => cambiarRol(u, e.target.value)} style={{ padding: 4 }}>
-                                            {(roles || []).map((r) => <option key={r.id_rol} value={r.id_rol}>{r.nombre_rol}</option>)}
-                                        </select>
-                                    </td>
-                                    <td><Estado valor={u.estado_cuenta} /></td>
-                                    <td>
-                                        <button className={"btn chico " + (u.estado_cuenta === "ACTIVO" ? "rojo" : "verde")} onClick={() => cambiarEstado(u)}>
-                                            {u.estado_cuenta === "ACTIVO" ? "Desactivar" : "Activar"}
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <div className="tabla-responsive">
+                        <table>
+                            <thead><tr><th>DNI</th><th>Nombre</th><th>Unidad</th><th>Correo</th><th>Teléfono</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></thead>
+                            <tbody>
+                                {usuariosFiltrados.length === 0 && <FilaVacia cols={8} />}
+                                {usuariosFiltrados.map((u) => (
+                                    <tr key={u.id_usuario}>
+                                        <td>{u.dni}</td>
+                                        <td>{u.nombre} {u.apellido}</td>
+                                        <td>{u.unidad || "-"}</td>
+                                        <td>{u.correo}</td>
+                                        <td>{u.telefono}</td>
+                                        <td>
+                                            <select value={u.id_rol} onChange={(e) => cambiarRol(u, e.target.value)} style={{ padding: 4 }}>
+                                                {(roles || []).map((r) => <option key={r.id_rol} value={r.id_rol}>{r.nombre_rol}</option>)}
+                                            </select>
+                                        </td>
+                                        <td><Estado valor={u.estado_cuenta} /></td>
+                                        <td>
+                                            <button className={"btn chico " + (u.estado_cuenta === "ACTIVO" ? "rojo" : "verde")} onClick={() => cambiarEstado(u)}>
+                                                {u.estado_cuenta === "ACTIVO" ? "Desactivar" : "Activar"}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </div>
         </>
@@ -995,9 +1112,11 @@ function Usuarios() {
 /** RF-002 Registrar unidad del edificio / RF-048 Historial de pagos por unidad */
 function Unidades() {
     const [unidades, recargar, error] = useDatos("/api/unidades");
-    const [f, setF] = useState({ bloque: "Block 73", numero_unidad: "", estado: "ACTIVA" });
+    const [f, setF] = useState({ bloque: "Piso 1", numero_unidad: "", estado: "ACTIVA" });
     const [res, setRes] = useState(null);
     const [historial, setHistorial] = useState(null);
+    const [busquedaUnidad, setBusquedaUnidad] = useState("");
+    const [busquedaHist, setBusquedaHist] = useState("");
     const [pagos] = useDatos(historial ? `/api/pagos?idUnidad=${historial.id_unidad}` : null);
 
     const registrar = async (e) => {
@@ -1014,14 +1133,29 @@ function Unidades() {
         catch (er) { setRes({ ok: false, mensaje: er.message }); }
     };
 
+    const unidadesFiltradas = (unidades || []).filter((u) => {
+        if (!busquedaUnidad.trim()) return true;
+        const b = busquedaUnidad.toLowerCase();
+        return (u.propietario && u.propietario.toLowerCase().includes(b)) ||
+               (u.numero_unidad && u.numero_unidad.includes(b)) ||
+               (u.bloque && u.bloque.toLowerCase().includes(b));
+    });
+
+    const pagosHistFiltrados = (pagos || []).filter((p) => {
+        if (!busquedaHist.trim()) return true;
+        const b = busquedaHist.toLowerCase();
+        return (p.usuario && p.usuario.toLowerCase().includes(b)) ||
+               (p.nro_operacion && p.nro_operacion.toLowerCase().includes(b));
+    });
+
     return (
         <>
             <div className="card">
-                <h2>Registrar unidad (departamento)</h2>
+                <h2>Registrar departamento por piso</h2>
                 <Resultado res={res} />
                 <form onSubmit={registrar} className="grid3">
-                    <Campo label="Bloque / Torre:"><input value={f.bloque} onChange={(e) => setF({ ...f, bloque: e.target.value })} /></Campo>
-                    <Campo label="Número de departamento:"><input value={f.numero_unidad} onChange={(e) => setF({ ...f, numero_unidad: e.target.value })} /></Campo>
+                    <Campo label="Piso:"><input value={f.bloque} placeholder="ej. Piso 1" onChange={(e) => setF({ ...f, bloque: e.target.value })} /></Campo>
+                    <Campo label="N° de departamento:"><input value={f.numero_unidad} placeholder="ej. 101" onChange={(e) => setF({ ...f, numero_unidad: e.target.value })} /></Campo>
                     <Campo label="Estado:">
                         <select value={f.estado} onChange={(e) => setF({ ...f, estado: e.target.value })}>
                             <option value="ACTIVA">Activa</option><option value="INACTIVA">Inactiva</option>
@@ -1031,38 +1165,76 @@ function Unidades() {
                 </form>
             </div>
             {historial && (
-                <div className="card">
-                    <h2>Historial de pagos — {historial.unidad}</h2>
-                    <button className="btn gris chico" onClick={() => setHistorial(null)}>Cerrar</button>
+                <div className="card" style={{ borderColor: "#0ea5e9" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                        <h2 style={{ margin: 0 }}>Historial de pagos — {historial.unidad}</h2>
+                        <button className="btn gris chico" onClick={() => setHistorial(null)}>Cerrar</button>
+                    </div>
+                    <div className="barra" style={{ marginBottom: 12 }}>
+                        <Campo label="Buscar en historial:">
+                            <input
+                                type="text"
+                                placeholder="Nombre de quien pagó / nro operación..."
+                                value={busquedaHist}
+                                onChange={(e) => setBusquedaHist(e.target.value)}
+                            />
+                        </Campo>
+                    </div>
                     {!pagos ? <Cargando /> : (
-                        <table>
-                            <thead><tr><th>Fecha</th><th>Periodo</th><th>Pagado por</th><th>N° Operación</th><th className="num">Monto</th><th>Estado</th></tr></thead>
-                            <tbody>
-                                {pagos.length === 0 && <FilaVacia cols={6} />}
-                                {pagos.map((p) => <tr key={p.id_pago}><td>{fechaTexto(p.fecha_pago)}</td><td>{periodoTexto(p.periodo)}</td><td>{p.usuario}</td><td>{p.nro_operacion || "-"}</td><td className="num">{Number(p.monto_pagado).toFixed(2)}</td><td><Estado valor={p.estado_pago} /></td></tr>)}
-                            </tbody>
-                        </table>
+                        <div className="tabla-responsive">
+                            <table>
+                                <thead><tr><th>Fecha</th><th>Periodo</th><th>Pagado por</th><th>N° Operación</th><th className="num">Monto</th><th>Estado</th></tr></thead>
+                                <tbody>
+                                    {pagosHistFiltrados.length === 0 && <FilaVacia cols={6} />}
+                                    {pagosHistFiltrados.map((p) => (
+                                        <tr key={p.id_pago}>
+                                            <td>{fechaTexto(p.fecha_pago)}</td>
+                                            <td>{periodoTexto(p.periodo)}</td>
+                                            <td>{p.usuario}</td>
+                                            <td>{p.nro_operacion || "-"}</td>
+                                            <td className="num">{Number(p.monto_pagado).toFixed(2)}</td>
+                                            <td><Estado valor={p.estado_pago} /></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     )}
                 </div>
             )}
             <div className="card">
-                <h2>Unidades del edificio</h2>
+                <h2>Distribución de departamentos por pisos</h2>
+                <div className="barra">
+                    <Campo label="Buscar por nombre o dpto:">
+                        <input
+                            type="text"
+                            placeholder="Propietario, piso o dpto..."
+                            value={busquedaUnidad}
+                            onChange={(e) => setBusquedaUnidad(e.target.value)}
+                        />
+                    </Campo>
+                </div>
                 {!unidades ? <Cargando error={error} /> : (
-                    <table>
-                        <thead><tr><th>Bloque</th><th>N°</th><th>Propietario (dueño)</th><th>Estado</th><th></th></tr></thead>
-                        <tbody>
-                            {unidades.map((u) => (
-                                <tr key={u.id_unidad}>
-                                    <td>{u.bloque}</td><td>{u.numero_unidad}</td><td>{u.propietario || <i>Sin propietario</i>}</td>
-                                    <td><Estado valor={u.estado} /></td>
-                                    <td className="acciones">
-                                        <button className="btn chico blanco" onClick={() => setHistorial(u)}>Historial de pagos</button>
-                                        <button className="btn chico gris" onClick={() => cambiarEstado(u)}>{u.estado === "ACTIVA" ? "Inactivar" : "Activar"}</button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <div className="tabla-responsive">
+                        <table>
+                            <thead><tr><th>Piso</th><th>N° Dpto</th><th>Propietario (dueño)</th><th>Estado</th><th>Acciones</th></tr></thead>
+                            <tbody>
+                                {unidadesFiltradas.length === 0 && <FilaVacia cols={5} />}
+                                {unidadesFiltradas.map((u) => (
+                                    <tr key={u.id_unidad}>
+                                        <td><b>{u.bloque || ("Piso " + (u.numero_unidad ? u.numero_unidad.charAt(0) : ""))}</b></td>
+                                        <td>Dpto. {u.numero_unidad}</td>
+                                        <td>{u.propietario || <i>Sin propietario</i>}</td>
+                                        <td><Estado valor={u.estado} /></td>
+                                        <td className="acciones">
+                                            <button className="btn chico blanco" onClick={() => setHistorial(u)}>Historial de pagos</button>
+                                            <button className="btn chico gris" onClick={() => cambiarEstado(u)}>{u.estado === "ACTIVA" ? "Inactivar" : "Activar"}</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </div>
         </>
@@ -1107,17 +1279,19 @@ function Conceptos() {
             <div className="card">
                 <h2>Conceptos configurados</h2>
                 {!conceptos ? <Cargando error={error} /> : (
-                    <table>
-                        <thead><tr><th>Concepto</th><th>Tipo</th><th className="num">Gasto referencial (edificio)</th><th></th></tr></thead>
-                        <tbody>
-                            {conceptos.map((k) => (
-                                <tr key={k.id_concepto}>
-                                    <td>{k.nombre_concepto}</td><td>{k.tipo_concepto}</td><td className="num">{soles(k.monto_base)}</td>
-                                    <td><button className="btn chico blanco" onClick={() => setF({ ...k })}>Editar</button></td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <div className="tabla-responsive">
+                        <table>
+                            <thead><tr><th>Concepto</th><th>Tipo</th><th className="num">Gasto referencial (edificio)</th><th></th></tr></thead>
+                            <tbody>
+                                {conceptos.map((k) => (
+                                    <tr key={k.id_concepto}>
+                                        <td>{k.nombre_concepto}</td><td>{k.tipo_concepto}</td><td className="num">{soles(k.monto_base)}</td>
+                                        <td><button className="btn chico blanco" onClick={() => setF({ ...k })}>Editar</button></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </div>
         </>
@@ -1127,9 +1301,19 @@ function Conceptos() {
 /** RF-024 Consultar morosidad / RF-025 Reporte de morosidad / RF-036 Exportar reporte */
 function Morosidad() {
     const [filas, , error] = useDatos("/api/morosidad");
+    const [busqueda, setBusqueda] = useState("");
     if (!filas) return <Cargando error={error} />;
-    const total = filas.reduce((s, f) => s + Number(f.saldo), 0);
-    const unidades = new Set(filas.map((f) => f.id_unidad)).size;
+
+    const filasFiltradas = (filas || []).filter((f) => {
+        if (!busqueda.trim()) return true;
+        const b = busqueda.toLowerCase();
+        return (f.propietario && f.propietario.toLowerCase().includes(b)) ||
+               (f.unidad && f.unidad.toLowerCase().includes(b)) ||
+               (f.periodo && f.periodo.includes(b));
+    });
+
+    const total = filasFiltradas.reduce((s, f) => s + Number(f.saldo), 0);
+    const unidades = new Set(filasFiltradas.map((f) => f.id_unidad)).size;
     const exportar = () => exportarCSV("reporte_morosidad.csv", [
         { titulo: "Unidad", valor: (f) => f.unidad },
         { titulo: "Propietario", valor: (f) => f.propietario },
@@ -1138,33 +1322,45 @@ function Morosidad() {
         { titulo: "Vencimiento", valor: (f) => fechaTexto(f.fecha_vencimiento) },
         { titulo: "Dias de atraso", valor: (f) => f.dias_atraso },
         { titulo: "Saldo (S/.)", valor: (f) => Number(f.saldo).toFixed(2) },
-    ], filas);
+    ], filasFiltradas);
 
     return (
         <div className="card">
             <h2>Reporte de morosidad</h2>
             <div className="kpis">
                 <div className="kpi"><span>Departamentos morosos</span><strong style={{ color: "#b91c1c" }}>{unidades}</strong></div>
-                <div className="kpi"><span>Cuotas vencidas</span><strong>{filas.length}</strong></div>
+                <div className="kpi"><span>Cuotas vencidas</span><strong>{filasFiltradas.length}</strong></div>
                 <div className="kpi alerta-kpi"><span>Deuda vencida total</span><strong>{soles(total)}</strong></div>
             </div>
-            <div className="acciones no-print" style={{ marginBottom: 10 }}>
+            <div className="barra no-print">
+                <Campo label="Buscar por nombre o dpto:">
+                    <input
+                        type="text"
+                        placeholder="Nombre de propietario o dpto..."
+                        value={busqueda}
+                        onChange={(e) => setBusqueda(e.target.value)}
+                    />
+                </Campo>
+            </div>
+            <div className="acciones no-print" style={{ marginBottom: 12 }}>
                 <button className="btn" onClick={exportar}>Exportar a Excel (CSV)</button>
                 <button className="btn gris" onClick={() => window.print()}>Imprimir reporte</button>
             </div>
-            <table>
-                <thead><tr><th>Unidad</th><th>Propietario</th><th>Teléfono</th><th>Periodo</th><th>Vencimiento</th><th className="num">Días de atraso</th><th className="num">Saldo (S/.)</th></tr></thead>
-                <tbody>
-                    {filas.length === 0 && <FilaVacia cols={7} texto="No hay cuotas vencidas. ¡Todos al día!" />}
-                    {filas.map((f) => (
-                        <tr key={f.id_cuota}>
-                            <td>{f.unidad}</td><td>{f.propietario || "-"}</td><td>{f.telefono || "-"}</td>
-                            <td>{periodoTexto(f.periodo)}</td><td>{fechaTexto(f.fecha_vencimiento)}</td>
-                            <td className="num">{f.dias_atraso}</td><td className="num">{Number(f.saldo).toFixed(2)}</td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
+            <div className="tabla-responsive">
+                <table>
+                    <thead><tr><th>Unidad</th><th>Propietario</th><th>Teléfono</th><th>Periodo</th><th>Vencimiento</th><th className="num">Días de atraso</th><th className="num">Saldo (S/.)</th></tr></thead>
+                    <tbody>
+                        {filasFiltradas.length === 0 && <FilaVacia cols={7} texto="No hay cuotas vencidas. ¡Todos al día!" />}
+                        {filasFiltradas.map((f) => (
+                            <tr key={f.id_cuota}>
+                                <td>{f.unidad}</td><td>{f.propietario || "-"}</td><td>{f.telefono || "-"}</td>
+                                <td>{periodoTexto(f.periodo)}</td><td>{fechaTexto(f.fecha_vencimiento)}</td>
+                                <td className="num">{f.dias_atraso}</td><td className="num">{Number(f.saldo).toFixed(2)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 }
@@ -1289,13 +1485,13 @@ function Login({ alEntrar }) {
                                     Administrador (La Directiva)
                                 </button>
                                 <button type="button" className="btn chico verde" onClick={() => rapido("maria.lozano@email.com", "123456")}>
-                                    María Lozano (Block 73 - 501)
+                                    María Lozano (Piso 5 - Dpto. 501)
                                 </button>
                                 <button type="button" className="btn chico verde" onClick={() => rapido("carlos.mendoza@email.com", "123456")}>
-                                    Carlos Mendoza (Block 73 - 302)
+                                    Carlos Mendoza (Piso 3 - Dpto. 302)
                                 </button>
                                 <button type="button" className="btn chico gris" onClick={() => rapido("miguel.chavez@email.com", "123456")}>
-                                    Miguel Chávez (Block 73 - 203 Moroso)
+                                    Miguel Chávez (Piso 2 - Dpto. 203 Moroso)
                                 </button>
                             </div>
                         </div>
@@ -1313,6 +1509,7 @@ function App() {
     const [usuario, setUsuario] = useState(guardado);
     const [vista, setVista] = useState(usuario && usuario.rol === "ADMINISTRADOR" ? "dashboard" : "estado");
     const [params, setParams] = useState(null);
+    const [menuAbierto, setMenuAbierto] = useState(false);
 
     useEffect(() => {
         const limpiar = () => setUsuario(null);
@@ -1326,7 +1523,7 @@ function App() {
     }} />;
 
     const esAdmin = usuario.rol === "ADMINISTRADOR";
-    const ir = (v, p) => { setParams(p || null); setVista(v); };
+    const ir = (v, p) => { setParams(p || null); setVista(v); setMenuAbierto(false); };
 
     const salir = async () => {
         try { await API.post("/api/auth/logout"); } catch (e) { /* ignorar */ }
@@ -1359,15 +1556,22 @@ function App() {
     return (
         <div>
             <div className="header">
-                <h1>SISTEMA WEB "EDIFICIO LA CRUCETA"</h1>
-                <div className="sub">Cobro y Gestión de Cuotas de Mantenimiento</div>
-                <div className="user">
-                    Usuario: <b>{usuario.nombreCompleto}</b> ({usuario.rol})
-                    {usuario.unidad ? ` — Departamento: ${usuario.unidad}` : ""}
+                <div className="header-container">
+                    <button className="btn-hamburguesa" onClick={() => setMenuAbierto(!menuAbierto)} aria-label="Menú">
+                        {menuAbierto ? "✕" : "☰"}
+                    </button>
+                    <div className="header-titulos">
+                        <h1>SISTEMA WEB "EDIFICIO LA CRUCETA"</h1>
+                        <div className="sub">Cobro y Gestión de Cuotas de Mantenimiento</div>
+                        <div className="user">
+                            Usuario: <b>{usuario.nombreCompleto}</b> ({usuario.rol})
+                            {usuario.unidad ? ` — ${usuario.unidad}` : ""}
+                        </div>
+                    </div>
                 </div>
             </div>
             <div className="layout">
-                <div className="sidebar">
+                <div className={"sidebar" + (menuAbierto ? " abierta" : "")}>
                     {menu.map(([id, texto]) => (
                         <button key={id} className={vista === id ? "activo" : ""} onClick={() => ir(id)}>
                             {texto}

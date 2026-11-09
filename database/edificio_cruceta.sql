@@ -126,52 +126,58 @@ INSERT IGNORE INTO rol (id_rol, nombre_rol) VALUES
  (2, 'PROPIETARIO'),
  (3, 'RESIDENTE');
 
--- 20 departamentos del Block 73 (5 pisos x 4 departamentos por piso)
+-- 20 departamentos distribuidos por pisos (5 pisos x 4 departamentos por piso)
 INSERT IGNORE INTO unidad (id_unidad, bloque, numero_unidad, estado) VALUES
- (1,  'Block 73', '101', 'ACTIVA'),
- (2,  'Block 73', '102', 'ACTIVA'),
- (3,  'Block 73', '103', 'ACTIVA'),
- (4,  'Block 73', '104', 'ACTIVA'),
- (5,  'Block 73', '201', 'ACTIVA'),
- (6,  'Block 73', '202', 'ACTIVA'),
- (7,  'Block 73', '203', 'ACTIVA'),
- (8,  'Block 73', '204', 'ACTIVA'),
- (9,  'Block 73', '301', 'ACTIVA'),
- (10, 'Block 73', '302', 'ACTIVA'),
- (11, 'Block 73', '303', 'ACTIVA'),
- (12, 'Block 73', '304', 'ACTIVA'),
- (13, 'Block 73', '401', 'ACTIVA'),
- (14, 'Block 73', '402', 'ACTIVA'),
- (15, 'Block 73', '403', 'ACTIVA'),
- (16, 'Block 73', '404', 'ACTIVA'),
- (17, 'Block 73', '501', 'ACTIVA'),
- (18, 'Block 73', '502', 'ACTIVA'),
- (19, 'Block 73', '503', 'ACTIVA'),
- (20, 'Block 73', '504', 'ACTIVA');
+ (1,  'Piso 1', '101', 'ACTIVA'),
+ (2,  'Piso 1', '102', 'ACTIVA'),
+ (3,  'Piso 1', '103', 'ACTIVA'),
+ (4,  'Piso 1', '104', 'ACTIVA'),
+ (5,  'Piso 2', '201', 'ACTIVA'),
+ (6,  'Piso 2', '202', 'ACTIVA'),
+ (7,  'Piso 2', '203', 'ACTIVA'),
+ (8,  'Piso 2', '204', 'ACTIVA'),
+ (9,  'Piso 3', '301', 'ACTIVA'),
+ (10, 'Piso 3', '302', 'ACTIVA'),
+ (11, 'Piso 3', '303', 'ACTIVA'),
+ (12, 'Piso 3', '304', 'ACTIVA'),
+ (13, 'Piso 4', '401', 'ACTIVA'),
+ (14, 'Piso 4', '402', 'ACTIVA'),
+ (15, 'Piso 4', '403', 'ACTIVA'),
+ (16, 'Piso 4', '404', 'ACTIVA'),
+ (17, 'Piso 5', '501', 'ACTIVA'),
+ (18, 'Piso 5', '502', 'ACTIVA'),
+ (19, 'Piso 5', '503', 'ACTIVA'),
+ (20, 'Piso 5', '504', 'ACTIVA');
+
+-- Actualizar si existen registros previos
+UPDATE unidad SET bloque = CONCAT('Piso ', LEFT(numero_unidad, 1)) WHERE bloque LIKE '%Block%';
 
 -- 1 Administrador (La Directiva) + 20 Propietarios (uno por cada departamento)
 INSERT IGNORE INTO usuario (id_usuario, dni, nombre, apellido, fecha_nacimiento, telefono, correo, direccion, contrasena, id_rol, id_unidad, estado_cuenta) VALUES
- (1,  '40000001', 'Rosa',           'Quispe Huaman',    '1980-03-12', '987000001', 'admin@cruceta.com',           'Residencial La Cruceta Block 73 - Directiva', SHA2('admin123',256), 1, NULL, 'ACTIVO'),
- (2,  '41000101', 'Luis',           'Torres Vega',      '1975-06-02', '987100101', 'luis.torres@email.com',       'Block 73 - Dpto. 101', SHA2('123456',256), 2, 1,  'ACTIVO'),
- (3,  '41000102', 'Maria',          'Flores Rojas',     '1982-11-21', '987100102', 'maria.flores@email.com',      'Block 73 - Dpto. 102', SHA2('123456',256), 2, 2,  'ACTIVO'),
- (4,  '41000103', 'Jorge',          'Ramirez Paz',      '1979-01-15', '987100103', 'jorge.ramirez@email.com',     'Block 73 - Dpto. 103', SHA2('123456',256), 2, 3,  'ACTIVO'),
- (5,  '41000104', 'Ana',            'Castillo Soto',    '1990-08-30', '987100104', 'ana.castillo@email.com',      'Block 73 - Dpto. 104', SHA2('123456',256), 2, 4,  'ACTIVO'),
- (6,  '41000201', 'Pedro',          'Salazar Leon',     '1968-04-09', '987100201', 'pedro.salazar@email.com',     'Block 73 - Dpto. 201', SHA2('123456',256), 2, 5,  'ACTIVO'),
- (7,  '41000202', 'Lucia',          'Herrera Diaz',     '1985-12-01', '987100202', 'lucia.herrera@email.com',     'Block 73 - Dpto. 202', SHA2('123456',256), 2, 6,  'ACTIVO'),
- (8,  '41000203', 'Miguel',         'Chavez Rios',      '1977-02-18', '987100203', 'miguel.chavez@email.com',     'Block 73 - Dpto. 203', SHA2('123456',256), 2, 7,  'ACTIVO'),
- (9,  '41000204', 'Carmen',         'Vargas Medina',    '1988-07-07', '987100204', 'carmen.vargas@email.com',     'Block 73 - Dpto. 204', SHA2('123456',256), 2, 8,  'ACTIVO'),
- (10, '41000301', 'Ricardo',        'Mejia Campos',     '1972-09-25', '987100301', 'ricardo.mejia@email.com',     'Block 73 - Dpto. 301', SHA2('123456',256), 2, 9,  'ACTIVO'),
- (11, '41000302', 'Carlos Alberto', 'Mendoza Ruiz',     '1984-02-27', '991234567', 'carlos.mendoza@email.com',    'Block 73 - Dpto. 302', SHA2('123456',256), 2, 10, 'ACTIVO'),
- (12, '41000303', 'Patricia',       'Nunez Ortiz',      '1993-05-14', '987100303', 'patricia.nunez@email.com',    'Block 73 - Dpto. 303', SHA2('123456',256), 2, 11, 'ACTIVO'),
- (13, '41000304', 'Fernando',       'Rojas Aguilar',    '1981-10-03', '987100304', 'fernando.rojas@email.com',    'Block 73 - Dpto. 304', SHA2('123456',256), 2, 12, 'ACTIVO'),
- (14, '41000401', 'Elena',          'Morales Pineda',   '1976-04-19', '987100401', 'elena.morales@email.com',     'Block 73 - Dpto. 401', SHA2('123456',256), 2, 13, 'ACTIVO'),
- (15, '41000402', 'Roberto',        'Silva Paredes',    '1983-09-11', '987100402', 'roberto.silva@email.com',     'Block 73 - Dpto. 402', SHA2('123456',256), 2, 14, 'ACTIVO'),
- (16, '41000403', 'Gabriela',       'Castro Luna',      '1991-01-28', '987100403', 'gabriela.castro@email.com',   'Block 73 - Dpto. 403', SHA2('123456',256), 2, 15, 'ACTIVO'),
- (17, '41000404', 'Hugo',           'Benites Espinoza', '1970-12-08', '987100404', 'hugo.benites@email.com',      'Block 73 - Dpto. 404', SHA2('123456',256), 2, 16, 'ACTIVO'),
- (18, '41000501', 'Maria',          'Lozano',           '1978-05-25', '987100501', 'maria.lozano@email.com',      'Block 73 - Dpto. 501', SHA2('123456',256), 2, 17, 'ACTIVO'),
- (19, '41000502', 'Raul',           'Paredes Gomez',    '1986-08-14', '987100502', 'raul.paredes@email.com',      'Block 73 - Dpto. 502', SHA2('123456',256), 2, 18, 'ACTIVO'),
- (20, '41000503', 'Silvia',         'Aguilar Ramos',    '1989-11-04', '987100503', 'silvia.aguilar@email.com',    'Block 73 - Dpto. 503', SHA2('123456',256), 2, 19, 'ACTIVO'),
- (21, '41000504', 'Oscar',          'Delgado Vera',     '1974-03-22', '987100504', 'oscar.delgado@email.com',     'Block 73 - Dpto. 504', SHA2('123456',256), 2, 20, 'ACTIVO');
+ (1,  '40000001', 'Rosa',           'Quispe Huaman',    '1980-03-12', '987000001', 'admin@cruceta.com',           'Residencial La Cruceta - Directiva', SHA2('admin123',256), 1, NULL, 'ACTIVO'),
+ (2,  '41000101', 'Luis',           'Torres Vega',      '1975-06-02', '987100101', 'luis.torres@email.com',       'Piso 1 - Dpto. 101', SHA2('123456',256), 2, 1,  'ACTIVO'),
+ (3,  '41000102', 'Maria',          'Flores Rojas',     '1982-11-21', '987100102', 'maria.flores@email.com',      'Piso 1 - Dpto. 102', SHA2('123456',256), 2, 2,  'ACTIVO'),
+ (4,  '41000103', 'Jorge',          'Ramirez Paz',      '1979-01-15', '987100103', 'jorge.ramirez@email.com',     'Piso 1 - Dpto. 103', SHA2('123456',256), 2, 3,  'ACTIVO'),
+ (5,  '41000104', 'Ana',            'Castillo Soto',    '1990-08-30', '987100104', 'ana.castillo@email.com',      'Piso 1 - Dpto. 104', SHA2('123456',256), 2, 4,  'ACTIVO'),
+ (6,  '41000201', 'Pedro',          'Salazar Leon',     '1968-04-09', '987100201', 'pedro.salazar@email.com',     'Piso 2 - Dpto. 201', SHA2('123456',256), 2, 5,  'ACTIVO'),
+ (7,  '41000202', 'Lucia',          'Herrera Diaz',     '1985-12-01', '987100202', 'lucia.herrera@email.com',     'Piso 2 - Dpto. 202', SHA2('123456',256), 2, 6,  'ACTIVO'),
+ (8,  '41000203', 'Miguel',         'Chavez Rios',      '1977-02-18', '987100203', 'miguel.chavez@email.com',     'Piso 2 - Dpto. 203', SHA2('123456',256), 2, 7,  'ACTIVO'),
+ (9,  '41000204', 'Carmen',         'Vargas Medina',    '1988-07-07', '987100204', 'carmen.vargas@email.com',     'Piso 2 - Dpto. 204', SHA2('123456',256), 2, 8,  'ACTIVO'),
+ (10, '41000301', 'Ricardo',        'Mejia Campos',     '1972-09-25', '987100301', 'ricardo.mejia@email.com',     'Piso 3 - Dpto. 301', SHA2('123456',256), 2, 9,  'ACTIVO'),
+ (11, '41000302', 'Carlos Alberto', 'Mendoza Ruiz',     '1984-02-27', '991234567', 'carlos.mendoza@email.com',    'Piso 3 - Dpto. 302', SHA2('123456',256), 2, 10, 'ACTIVO'),
+ (12, '41000303', 'Patricia',       'Nunez Ortiz',      '1993-05-14', '987100303', 'patricia.nunez@email.com',    'Piso 3 - Dpto. 303', SHA2('123456',256), 2, 11, 'ACTIVO'),
+ (13, '41000304', 'Fernando',       'Rojas Aguilar',    '1981-10-03', '987100304', 'fernando.rojas@email.com',    'Piso 3 - Dpto. 304', SHA2('123456',256), 2, 12, 'ACTIVO'),
+ (14, '41000401', 'Elena',          'Morales Pineda',   '1976-04-19', '987100401', 'elena.morales@email.com',     'Piso 4 - Dpto. 401', SHA2('123456',256), 2, 13, 'ACTIVO'),
+ (15, '41000402', 'Roberto',        'Silva Paredes',    '1983-09-11', '987100402', 'roberto.silva@email.com',     'Piso 4 - Dpto. 402', SHA2('123456',256), 2, 14, 'ACTIVO'),
+ (16, '41000403', 'Gabriela',       'Castro Luna',      '1991-01-28', '987100403', 'gabriela.castro@email.com',   'Piso 4 - Dpto. 403', SHA2('123456',256), 2, 15, 'ACTIVO'),
+ (17, '41000404', 'Hugo',           'Benites Espinoza', '1970-12-08', '987100404', 'hugo.benites@email.com',      'Piso 4 - Dpto. 404', SHA2('123456',256), 2, 16, 'ACTIVO'),
+ (18, '41000501', 'Maria',          'Lozano',           '1978-05-25', '987100501', 'maria.lozano@email.com',      'Piso 5 - Dpto. 501', SHA2('123456',256), 2, 17, 'ACTIVO'),
+ (19, '41000502', 'Raul',           'Paredes Gomez',    '1986-08-14', '987100502', 'raul.paredes@email.com',      'Piso 5 - Dpto. 502', SHA2('123456',256), 2, 18, 'ACTIVO'),
+ (20, '41000503', 'Silvia',         'Aguilar Ramos',    '1989-11-04', '987100503', 'silvia.aguilar@email.com',    'Piso 5 - Dpto. 503', SHA2('123456',256), 2, 19, 'ACTIVO'),
+ (21, '41000504', 'Oscar',          'Delgado Vera',     '1974-03-22', '987100504', 'oscar.delgado@email.com',     'Piso 5 - Dpto. 504', SHA2('123456',256), 2, 20, 'ACTIVO');
+
+UPDATE usuario SET direccion = REPLACE(direccion, 'Residencial La Cruceta Block 73 - Directiva', 'Residencial La Cruceta - Directiva') WHERE direccion LIKE '%Block 73%';
+UPDATE usuario SET direccion = REPLACE(direccion, 'Block 73 - ', '') WHERE direccion LIKE '%Block 73%';
 
 -- Conceptos reales segun el Resumen de Compromisos de Pago de Octubre 2026 (sin ascensor)
 INSERT IGNORE INTO concepto_cobro (id_concepto, nombre_concepto, tipo_concepto, monto_base) VALUES
@@ -261,12 +267,14 @@ SELECT 300 + c.id_unidad, c.id_cuota, u.id_usuario, '2026-10-25',
 FROM cuota c JOIN usuario u ON u.id_unidad = c.id_unidad AND u.id_rol = 2
 WHERE c.periodo = '2026-10' AND c.id_unidad IN (1, 2, 5, 17);
 
--- Comprobantes (apuntan a la boleta de pago de La Directiva)
+-- Comprobantes (apuntan a la boleta individual de pago de cada propietario)
 INSERT IGNORE INTO comprobante (id_comprobante, id_pago, archivo, fecha_carga, estado_validacion, observacion)
-SELECT p.id_pago, p.id_pago, 'seed/voucher_demo.svg', TIMESTAMP(p.fecha_pago, '10:30:00'),
+SELECT p.id_pago, p.id_pago, CONCAT('seed/voucher_', p.id_pago, '.svg'), TIMESTAMP(p.fecha_pago, '10:30:00'),
        CASE p.estado_pago WHEN 'VALIDADO' THEN 'VALIDADO' WHEN 'RECHAZADO' THEN 'RECHAZADO' ELSE 'PENDIENTE' END,
        NULL
 FROM pago p;
+
+UPDATE comprobante SET archivo = CONCAT('seed/voucher_', id_pago, '.svg') WHERE archivo = 'seed/voucher_demo.svg';
 
 -- Recibos emitidos con numeracion correlativa de 6 digitos (ej. 004148 para Maria Lozano - Dpto. 501)
 INSERT IGNORE INTO recibo (id_recibo, numero_recibo, fecha_emision, id_pago, observacion)

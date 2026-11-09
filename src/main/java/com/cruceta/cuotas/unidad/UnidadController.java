@@ -27,7 +27,7 @@ public class UnidadController {
         auth.requerir(a);
         return jdbc.queryForList("""
                 SELECT un.id_unidad, un.bloque, un.numero_unidad, un.estado,
-                       CONCAT(un.bloque, ' - ', un.numero_unidad) AS unidad,
+                       CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad,
                        (SELECT CONCAT(u.nombre, ' ', u.apellido) FROM usuario u
                          WHERE u.id_unidad = un.id_unidad AND u.id_rol = 2 AND u.estado_cuenta = 'ACTIVO' LIMIT 1) AS propietario
                 FROM unidad un ORDER BY un.bloque, un.numero_unidad""");

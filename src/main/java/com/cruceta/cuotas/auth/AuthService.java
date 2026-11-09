@@ -38,7 +38,7 @@ public class AuthService {
 
         List<Map<String, Object>> filas = jdbc.queryForList("""
                 SELECT u.id_usuario, u.nombre, u.apellido, u.correo, u.contrasena, u.estado_cuenta,
-                       r.nombre_rol, u.id_unidad, CONCAT(un.bloque, ' - ', un.numero_unidad) AS unidad
+                       r.nombre_rol, u.id_unidad, CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad
                 FROM usuario u JOIN rol r ON r.id_rol = u.id_rol
                 LEFT JOIN unidad un ON un.id_unidad = u.id_unidad
                 WHERE u.correo = ?""", correo.trim());

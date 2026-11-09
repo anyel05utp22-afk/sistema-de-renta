@@ -24,7 +24,7 @@ public class CuotaService {
     /** Vista de cuota con totales calculados (monto_total = suma del detalle). */
     static final String VISTA_CUOTA = """
             SELECT x.*, (x.monto_total - x.monto_pagado) AS saldo FROM (
-              SELECT c.id_cuota, c.id_unidad, CONCAT(un.bloque, ' - ', un.numero_unidad) AS unidad, c.periodo,
+              SELECT c.id_cuota, c.id_unidad, CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad, c.periodo,
                      DATE_FORMAT(c.fecha_emision, '%Y-%m-%d') AS fecha_emision,
                      DATE_FORMAT(c.fecha_vencimiento, '%Y-%m-%d') AS fecha_vencimiento,
                      c.estado_cuota,
@@ -228,7 +228,7 @@ public class CuotaService {
         if (idUnidad == null) throw ApiException.validacion("Seleccione un departamento.");
         detectarVencidas();
         Map<String, Object> r = new LinkedHashMap<>(jdbc.queryForMap("""
-                SELECT un.id_unidad, CONCAT(un.bloque, ' - ', un.numero_unidad) AS unidad,
+                SELECT un.id_unidad, CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad,
                        (SELECT CONCAT(u.nombre, ' ', u.apellido) FROM usuario u
                          WHERE u.id_unidad = un.id_unidad AND u.id_rol = 2 AND u.estado_cuenta = 'ACTIVO' LIMIT 1) AS propietario
                 FROM unidad un WHERE un.id_unidad = ?""", idUnidad));
