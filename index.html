@@ -18,12 +18,12 @@
     <script type="text/babel" data-presets="react">
 // =============================================================
 //  Comunicacion con el backend (Spring Boot)  ->  /api/...
-//  Funciona tanto en http://localhost:8080 como abriendo index.html
+//  Funciona tanto en http://localhost:8082 como abriendo index.html
 //  directamente o con Live Server.
 // =============================================================
-const BASE_API = (window.location.port === "8080" && window.location.protocol.startsWith("http"))
+const BASE_API = (window.location.port === "8082" && window.location.protocol.startsWith("http"))
     ? ""
-    : "http://localhost:8080";
+    : "http://localhost:8082";
 
 const API = {
     token() {
@@ -45,7 +45,7 @@ const API = {
         try {
             res = await fetch(BASE_API + url, opciones);
         } catch (err) {
-            throw new Error("No se pudo conectar al servidor Java (http://localhost:8080). Ejecuta iniciar.bat o presiona F5 en VS Code.");
+            throw new Error("No se pudo conectar al servidor Java (http://localhost:8082). Ejecuta iniciar.bat o presiona F5 en VS Code.");
         }
         let datos = null;
         try { datos = await res.json(); } catch (e) { /* respuesta sin cuerpo */ }

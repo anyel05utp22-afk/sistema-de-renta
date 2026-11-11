@@ -277,7 +277,7 @@ public class CuotaService {
                 SELECT v.*,
                        (SELECT u.telefono FROM usuario u WHERE u.id_unidad = v.id_unidad AND u.id_rol = 2 LIMIT 1) AS telefono
                 FROM (""" + VISTA_CUOTA + """
-                ) v WHERE """ + condicion + """ ORDER BY v.condicion_deuda DESC, v.dias_atraso DESC, v.unidad""");
+                ) v WHERE """ + condicion + " ORDER BY v.condicion_deuda DESC, v.dias_atraso DESC, v.unidad");
     }
 
     // ===================== Enviar recordatorio de cobro =====================

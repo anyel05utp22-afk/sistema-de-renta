@@ -38,7 +38,7 @@ Sigue exactamente el diagrama de clases/BD entregado:
      .\mvnw.cmd spring-boot:run
      ```
    - **Doble clic** en [`iniciar.bat`](iniciar.bat).
-4. Abre en el navegador: **http://localhost:8080**
+4. Abre en el navegador: **http://localhost:8082**
 
 ---
 

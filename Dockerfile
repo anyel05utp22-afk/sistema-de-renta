@@ -10,7 +10,6 @@ FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 COPY uploads uploads
-EXPOSE 8080
-ENV PORT=8080
+EXPOSE 8082
+ENV PORT=8082
 ENTRYPOINT ["sh", "-c", "java -Dserver.port=${PORT} -jar app.jar"]
-
