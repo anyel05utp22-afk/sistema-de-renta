@@ -49,12 +49,35 @@ public class UnidadController {
         return Map.of("mensaje", "Unidad " + bloque + " - " + numero + " registrada correctamente.");
     }
 
+    /** Modificar unidad del edificio (bloque, numero_unidad, estado) */
     @PutMapping("/{id}")
-    public Map<String, Object> cambiarEstado(@RequestHeader(value = "Authorization", required = false) String a,
-                                             @PathVariable int id, @RequestBody Map<String, Object> b) {
+    public Map<String, Object> modificar(@RequestHeader(value = "Authorization", required = false) String a,
+                                         @PathVariable int id, @RequestBody Map<String, Object> b) {
         auth.requerirAdmin(a);
-        String estado = Datos.obligatorio(b, "estado", "Estado");
-        jdbc.update("UPDATE unidad SET estado = ? WHERE id_unidad = ?", estado, id);
-        return Map.of("mensaje", "Estado de la unidad actualizado.");
+        String bloque = Datos.texto(b, "bloque");
+        String numero = Datos.texto(b, "numero_unidad");
+        String estado = Datos.texto(b, "estado");
+
+        if (bloque.isEmpty() && numero.isEmpty() && !estado.isEmpty()) {
+            // Compatibilidad directa con cambio rápido de estado
+            int n = jdbc.update("UPDATE unidad SET estado = ? WHERE id_unidad = ?", estado, id);
+            if (n == 0) throw ApiException.noEncontrado("Unidad no encontrada.");
+            return Map.of("mensaje", "Estado de la unidad actualizado.");
+        }
+
+        if (bloque.isEmpty()) throw ApiException.validacion("El piso o bloque es obligatorio.");
+        if (numero.isEmpty()) throw ApiException.validacion("El número de departamento es obligatorio.");
+        if (estado.isEmpty()) estado = "ACTIVA";
+
+        Integer dup = jdbc.queryForObject("SELECT COUNT(*) FROM unidad WHERE bloque = ? AND numero_unidad = ? AND id_unidad <> ?",
+                Integer.class, bloque, numero, id);
+        if (dup != null && dup > 0)
+            throw ApiException.validacion("Ya existe otra unidad registrada como " + bloque + " - " + numero + ".");
+
+        int n = jdbc.update("UPDATE unidad SET bloque = ?, numero_unidad = ?, estado = ? WHERE id_unidad = ?",
+                bloque, numero, estado, id);
+        if (n == 0) throw ApiException.noEncontrado("Unidad no encontrada.");
+
+        return Map.of("mensaje", "Unidad " + bloque + " - " + numero + " modificada correctamente.");
     }
 }

@@ -44,9 +44,9 @@ Sigue exactamente el diagrama de clases/BD entregado:
 
 ## Cuentas predefinidas para pruebas
 
-| Rol | Correo | Contraseña | Departamento |
+| Rol | Correo | Contraseña | Departamento / Cargo |
 |---|---|---|---|
-| **Administrador** | `admin@cruceta.com` | `admin123` | Administración |
-| **Propietario** | `carlos.mendoza@email.com` | `123456` | Torre B - 302 |
-| **Propietario (con mora)** | `miguel.chavez@email.com` | `123456` | Torre B - 101 |
-| **Otros propietarios** | `luis.torres@email.com`, `maria.flores@email.com`, etc. | `123456` | Torres A y B |
+| **Administrador** | `admin@cruceta.com` | `admin123` | Administración (La Directiva) |
+| **Propietario** | `carlos.mendoza@email.com` | `123456` | Piso 3 - Dpto. 302 |
+| **Propietario (con mora)** | `miguel.chavez@email.com` | `123456` | Piso 2 - Dpto. 203 |
+| **Otros propietarios** | `maria.lozano@email.com`, `luis.torres@email.com`, etc. | `123456` | Pisos 1 al 5 |

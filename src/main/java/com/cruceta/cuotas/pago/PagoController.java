@@ -47,8 +47,8 @@ public class PagoController {
         return pagos.registrar(auth.requerir(a), idCuota, monto, metodo, nroOperacion, fecha, archivo);
     }
 
-    /** RF-019 Validar comprobante de pago */
-    @PostMapping("/pagos/{id}/validar")
+    /** RF-019 Aprobar comprobante de pago (renombrado de validar, guarda Aprobado y emite constancia) */
+    @PostMapping(path = {"/pagos/{id}/aprobar", "/pagos/{id}/validar"})
     public Map<String, Object> validar(@RequestHeader(value = "Authorization", required = false) String a, @PathVariable int id) {
         auth.requerirAdmin(a);
         return pagos.validar(id);
@@ -60,6 +60,16 @@ public class PagoController {
                                         @PathVariable int id, @RequestBody Map<String, Object> b) {
         auth.requerirAdmin(a);
         return pagos.rechazar(id, Datos.texto(b, "motivo"));
+    }
+
+    /** Anular pago registrado */
+    @PostMapping("/pagos/{id}/anular")
+    public Map<String, Object> anular(@RequestHeader(value = "Authorization", required = false) String a,
+                                      @PathVariable int id,
+                                      @RequestBody(required = false) Map<String, Object> b) {
+        auth.requerirAdmin(a);
+        String motivo = b == null ? null : Datos.texto(b, "motivo");
+        return pagos.anular(id, motivo);
     }
 
     /** RF-022 Consultar constancias de pago */

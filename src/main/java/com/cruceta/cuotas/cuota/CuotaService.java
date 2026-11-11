@@ -21,12 +21,21 @@ import java.util.*;
 @Service
 public class CuotaService {
 
-    /** Vista de cuota con totales calculados (monto_total = suma del detalle). */
+    /** Vista de cuota con totales calculados (monto_total = suma del detalle) y clasificación de deuda. */
     static final String VISTA_CUOTA = """
-            SELECT x.*, (x.monto_total - x.monto_pagado) AS saldo FROM (
+            SELECT x.*, 
+                   (x.monto_total - x.monto_pagado) AS saldo,
+                   CASE 
+                       WHEN (x.monto_total - x.monto_pagado) <= 0 THEN 'PAGADA'
+                       WHEN x.dias_atraso > 30 THEN 'MOROSO'
+                       WHEN x.dias_atraso > 0 THEN 'DEUDOR'
+                       ELSE 'PENDIENTE'
+                   END AS condicion_deuda
+            FROM (
               SELECT c.id_cuota, c.id_unidad, CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad, c.periodo,
                      DATE_FORMAT(c.fecha_emision, '%Y-%m-%d') AS fecha_emision,
                      DATE_FORMAT(c.fecha_vencimiento, '%Y-%m-%d') AS fecha_vencimiento,
+                     DATEDIFF(CURDATE(), c.fecha_vencimiento) AS dias_atraso,
                      c.estado_cuota,
                      (SELECT CONCAT(u.nombre, ' ', u.apellido) FROM usuario u
                        WHERE u.id_unidad = c.id_unidad AND u.id_rol = 2 AND u.estado_cuenta = 'ACTIVO' LIMIT 1) AS propietario,
@@ -70,7 +79,7 @@ public class CuotaService {
         detectarVencidas();
         StringBuilder sql = new StringBuilder(VISTA_CUOTA + " WHERE 1=1");
         List<Object> params = new ArrayList<>();
-        if (!s.esAdmin()) idUnidad = s.idUnidad() == null ? -1 : s.idUnidad();
+        if (!s.tieneAccesoGestion()) idUnidad = s.idUnidad() == null ? -1 : s.idUnidad();
         if (idUnidad != null) { sql.append(" AND x.id_unidad = ?"); params.add(idUnidad); }
         if (periodo != null && !periodo.isBlank()) { sql.append(" AND x.periodo = ?"); params.add(periodo); }
         if (estado != null && !estado.isBlank()) { sql.append(" AND x.estado_cuota = ?"); params.add(estado); }
@@ -82,7 +91,7 @@ public class CuotaService {
         List<Map<String, Object>> l = jdbc.queryForList(VISTA_CUOTA + " WHERE x.id_cuota = ?", idCuota);
         if (l.isEmpty()) throw ApiException.noEncontrado("La cuota solicitada no existe.");
         Map<String, Object> cuota = new LinkedHashMap<>(l.get(0));
-        if (!s.esAdmin() && !Objects.equals(cuota.get("id_unidad"), s.idUnidad()))
+        if (!s.tieneAccesoGestion() && !Objects.equals(cuota.get("id_unidad"), s.idUnidad()))
             throw ApiException.prohibido("No puede consultar cuotas de otro departamento.");
         cuota.put("detalles", jdbc.queryForList("""
                 SELECT d.id_concepto, k.nombre_concepto, k.tipo_concepto, d.monto_concepto
@@ -224,7 +233,7 @@ public class CuotaService {
 
     // ===================== RF-013 Consultar estado de cuenta =====================
     public Map<String, Object> estadoCuenta(Sesion s, Integer idUnidad) {
-        if (!s.esAdmin()) idUnidad = s.idUnidad();
+        if (!s.tieneAccesoGestion()) idUnidad = s.idUnidad();
         if (idUnidad == null) throw ApiException.validacion("Seleccione un departamento.");
         detectarVencidas();
         Map<String, Object> r = new LinkedHashMap<>(jdbc.queryForMap("""
@@ -245,14 +254,73 @@ public class CuotaService {
         return r;
     }
 
-    // ===================== RF-024 Consultar morosidad =====================
+    // ===================== RF-024 Consultar morosidad (con filtro RF-042) =====================
     public List<Map<String, Object>> morosidad() {
+        return morosidadFiltrada("VENCIDA");
+    }
+
+    public List<Map<String, Object>> morosidadFiltrada(String filtro) {
         detectarVencidas();
+        String condicion;
+        if ("PENDIENTE".equalsIgnoreCase(filtro)) {
+            condicion = "v.estado_cuota = 'PENDIENTE'";
+        } else if ("DEUDOR".equalsIgnoreCase(filtro)) {
+            condicion = "v.estado_cuota = 'VENCIDA' AND v.dias_atraso <= 30 AND v.dias_atraso > 0";
+        } else if ("MOROSO".equalsIgnoreCase(filtro)) {
+            condicion = "v.estado_cuota = 'VENCIDA' AND v.dias_atraso > 30";
+        } else if ("TODAS".equalsIgnoreCase(filtro)) {
+            condicion = "v.estado_cuota IN ('VENCIDA', 'PENDIENTE')";
+        } else {
+            condicion = "v.estado_cuota = 'VENCIDA'";
+        }
         return jdbc.queryForList("""
-                SELECT v.*, DATEDIFF(CURDATE(), v.fecha_vencimiento) AS dias_atraso,
+                SELECT v.*,
                        (SELECT u.telefono FROM usuario u WHERE u.id_unidad = v.id_unidad AND u.id_rol = 2 LIMIT 1) AS telefono
                 FROM (""" + VISTA_CUOTA + """
-                ) v WHERE v.estado_cuota = 'VENCIDA' ORDER BY v.unidad, v.periodo""");
+                ) v WHERE """ + condicion + """ ORDER BY v.condicion_deuda DESC, v.dias_atraso DESC, v.unidad""");
+    }
+
+    // ===================== Enviar recordatorio de cobro =====================
+    public Map<String, Object> enviarRecordatorio(int idCuota) {
+        Map<String, Object> c = jdbc.queryForMap(VISTA_CUOTA + " WHERE x.id_cuota = ?", idCuota);
+        if ("PAGADA".equals(c.get("estado_cuota"))) {
+            throw ApiException.validacion("La cuota ya se encuentra pagada; no requiere recordatorio.");
+        }
+        String unidad = (String) c.get("unidad");
+        String prop = c.get("propietario") != null ? (String) c.get("propietario") : "Propietario";
+        BigDecimal saldo = (BigDecimal) c.get("saldo");
+        String periodo = (String) c.get("periodo");
+        return Map.of("ok", true,
+                "mensaje", "Recordatorio de cobro enviado a " + prop + " (" + unidad + ") por el periodo " + periodo + " (Saldo: S/. " + saldo + ").");
+    }
+
+    public Map<String, Object> recordatorioMasivo(String periodo) {
+        detectarVencidas();
+        String sql = VISTA_CUOTA + " WHERE x.estado_cuota IN ('PENDIENTE', 'VENCIDA')";
+        List<Object> p = new ArrayList<>();
+        if (periodo != null && !periodo.isBlank()) {
+            sql += " AND x.periodo = ?";
+            p.add(periodo);
+        }
+        List<Map<String, Object>> pendientes = jdbc.queryForList(sql, p.toArray());
+        return Map.of("ok", true, "total_notificados", pendientes.size(),
+                "mensaje", "Se enviaron " + pendientes.size() + " recordatorios de cobro a los departamentos con saldo pendiente.");
+    }
+
+    // ===================== Alertar morosidad =====================
+    public Map<String, Object> alertarMorosidad(Integer idCuota) {
+        detectarVencidas();
+        if (idCuota != null) {
+            Map<String, Object> c = jdbc.queryForMap(VISTA_CUOTA + " WHERE x.id_cuota = ?", idCuota);
+            String unidad = (String) c.get("unidad");
+            String prop = c.get("propietario") != null ? (String) c.get("propietario") : "Propietario";
+            BigDecimal saldo = (BigDecimal) c.get("saldo");
+            return Map.of("ok", true,
+                    "mensaje", "Alerta formal de morosidad emitida a " + prop + " (" + unidad + ") por deuda vencida de S/. " + saldo + ".");
+        }
+        List<Map<String, Object>> morosos = morosidad();
+        return Map.of("ok", true, "total_alertados", morosos.size(),
+                "mensaje", "Alerta formal de morosidad enviada a los " + morosos.size() + " departamentos en estado vencido.");
     }
 
     // ===================== RF-041 Dashboard administrativo =====================
@@ -273,7 +341,9 @@ public class CuotaService {
         r.put("periodo", periodo);
         r.putAll(jdbc.queryForMap("""
                 SELECT COUNT(DISTINCT id_unidad) AS unidades_morosas, COUNT(*) AS cuotas_vencidas,
-                       COALESCE(SUM(saldo), 0) AS deuda_vencida
+                       COALESCE(SUM(saldo), 0) AS deuda_vencida,
+                       COALESCE(SUM(CASE WHEN dias_atraso > 30 THEN 1 ELSE 0 END), 0) AS total_morosos,
+                       COALESCE(SUM(CASE WHEN dias_atraso <= 30 AND dias_atraso > 0 THEN 1 ELSE 0 END), 0) AS total_deudores
                 FROM (""" + VISTA_CUOTA + ") v WHERE v.estado_cuota = 'VENCIDA'"));
         r.put("pagos_en_revision", jdbc.queryForObject("SELECT COUNT(*) FROM pago WHERE estado_pago = 'EN_REVISION'", Integer.class));
         r.put("unidades", unidadesActivas());

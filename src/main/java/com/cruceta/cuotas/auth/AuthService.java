@@ -83,6 +83,13 @@ public class AuthService {
         return s;
     }
 
+    /** Administrador o Miembro de la Junta Directiva (auditoria, reportes y fiscalizacion). */
+    public Sesion requerirAdminOJunta(String authHeader) {
+        Sesion s = requerir(authHeader);
+        if (!s.tieneAccesoGestion()) throw ApiException.prohibido("Esta operacion requiere rol de Administrador o Junta Directiva.");
+        return s;
+    }
+
     private String token(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
         return authHeader.substring(7).trim();

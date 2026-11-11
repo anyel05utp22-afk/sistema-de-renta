@@ -59,7 +59,7 @@ public class PagoService {
     public List<Map<String, Object>> listar(Sesion s, String estado, Integer idUnidad) {
         StringBuilder sql = new StringBuilder(VISTA_PAGO + " WHERE 1=1");
         List<Object> params = new ArrayList<>();
-        if (!s.esAdmin()) idUnidad = s.idUnidad() == null ? -1 : s.idUnidad();
+        if (!s.tieneAccesoGestion()) idUnidad = s.idUnidad() == null ? -1 : s.idUnidad();
         if (idUnidad != null) { sql.append(" AND c.id_unidad = ?"); params.add(idUnidad); }
         if (estado != null && !estado.isBlank()) { sql.append(" AND p.estado_pago = ?"); params.add(estado); }
         sql.append(" ORDER BY p.fecha_pago DESC, p.id_pago DESC");
@@ -132,15 +132,34 @@ public class PagoService {
         return r;
     }
 
-    // ===================== RF-019 Validar comprobante =====================
+    // ===================== RF-019 Aprobar comprobante =====================
     @Transactional
     public Map<String, Object> validar(int idPago) {
         Map<String, Object> p = pagoEnRevision(idPago);
         jdbc.update("UPDATE pago SET estado_pago = 'VALIDADO' WHERE id_pago = ?", idPago);
         jdbc.update("UPDATE comprobante SET estado_validacion = 'VALIDADO', observacion = NULL WHERE id_pago = ?", idPago);
-        String numero = emitirRecibo(idPago, "Pago validado por la administracion");
+        String numero = emitirRecibo(idPago, "Pago aprobado por la administracion");
         cuotas.actualizarEstado(((Number) p.get("id_cuota")).intValue());
-        return Map.of("mensaje", "Comprobante validado. Se emitio la constancia de pago " + numero + ".", "numero_recibo", numero);
+        return Map.of("mensaje", "Comprobante aprobado exitosamente. El sistema emitio la constancia de pago N° " + numero + ".", "numero_recibo", numero);
+    }
+
+    // ===================== Anular pago =====================
+    @Transactional
+    public Map<String, Object> anular(int idPago, String motivo) {
+        List<Map<String, Object>> filas = jdbc.queryForList("SELECT id_pago, id_cuota, estado_pago FROM pago WHERE id_pago = ?", idPago);
+        if (filas.isEmpty()) throw ApiException.noEncontrado("Pago no encontrado.");
+        Map<String, Object> p = filas.get(0);
+        if ("ANULADO".equals(p.get("estado_pago"))) {
+            throw ApiException.validacion("El pago ya se encuentra anulado.");
+        }
+        String obs = (motivo == null || motivo.isBlank()) ? "Pago anulado por la administracion" : motivo.trim();
+        jdbc.update("UPDATE pago SET estado_pago = 'ANULADO' WHERE id_pago = ?", idPago);
+        jdbc.update("UPDATE comprobante SET estado_validacion = 'ANULADO', observacion = ? WHERE id_pago = ?", obs, idPago);
+        jdbc.update("UPDATE recibo SET observacion = CONCAT('[ANULADO] ', ?) WHERE id_pago = ?", obs, idPago);
+
+        int idCuota = ((Number) p.get("id_cuota")).intValue();
+        cuotas.actualizarEstado(idCuota);
+        return Map.of("mensaje", "Pago #" + idPago + " anulado correctamente. La cuota ha sido actualizada.");
     }
 
     // ===================== RF-020 Rechazar comprobante =====================
@@ -169,7 +188,7 @@ public class PagoService {
                        v.id_pago, v.periodo, v.unidad, v.usuario, v.monto_pagado, v.metodo_pago, v.nro_operacion, v.fecha_pago, v.id_unidad
                 FROM recibo r JOIN (""" + VISTA_PAGO + """
                 ) v ON v.id_pago = r.id_pago""";
-        if (s.esAdmin()) return jdbc.queryForList(sql + " ORDER BY r.id_recibo DESC");
+        if (s.tieneAccesoGestion()) return jdbc.queryForList(sql + " ORDER BY r.id_recibo DESC");
         return jdbc.queryForList(sql + " WHERE v.id_unidad = ? ORDER BY r.id_recibo DESC", s.idUnidad());
     }
 
@@ -187,7 +206,7 @@ public class PagoService {
                 LEFT JOIN recibo r ON r.id_pago = p.id_pago
                 WHERE cp.id_comprobante = ?""", idComprobante);
         if (l.isEmpty()) throw ApiException.noEncontrado("Comprobante no encontrado.");
-        if (!s.esAdmin() && !Objects.equals(l.get(0).get("id_unidad"), s.idUnidad()))
+        if (!s.tieneAccesoGestion() && !Objects.equals(l.get(0).get("id_unidad"), s.idUnidad()))
             throw ApiException.prohibido("No puede ver comprobantes de otro departamento.");
         
         Map<String, Object> row = l.get(0);

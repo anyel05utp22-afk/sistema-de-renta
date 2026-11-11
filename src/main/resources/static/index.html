@@ -143,16 +143,31 @@ function Campo({ label, children, className, ayuda }) {
 }
 
 const COLOR_ESTADO = {
-    PAGADA: "b-verde", VALIDADO: "b-verde", ACTIVO: "b-verde", ACTIVA: "b-verde",
-    PENDIENTE: "b-amarillo", EN_REVISION: "b-amarillo",
-    VENCIDA: "b-rojo", RECHAZADO: "b-rojo", INACTIVO: "b-gris", INACTIVA: "b-gris",
+    PAGADA: "b-verde", VALIDADO: "b-verde", ACTIVO: "b-verde", ACTIVA: "b-verde", "AL DIA": "b-verde",
+    PENDIENTE: "b-amarillo", EN_REVISION: "b-amarillo", DEUDOR: "b-amarillo",
+    VENCIDA: "b-rojo", MOROSO: "b-rojo", RECHAZADO: "b-rojo", INACTIVO: "b-gris", INACTIVA: "b-gris",
 };
-const TEXTO_ESTADO = { EN_REVISION: "Pagado en revisión", VALIDADO: "Verificado" };
+const TEXTO_ESTADO = {
+    EN_REVISION: "Pagado en revisión",
+    VALIDADO: "Verificado",
+    DEUDOR: "Deudor (< 30 días)",
+    MOROSO: "Moroso (> 30 días)",
+    "AL DIA": "Al día",
+    VENCIDA: "Vencida",
+};
 
-function Estado({ valor }) {
+function Estado({ valor, diasAtraso, condicionDeuda }) {
     if (!valor) return null;
-    const texto = TEXTO_ESTADO[valor] || (valor.charAt(0) + valor.slice(1).toLowerCase());
-    return <span className={"badge " + (COLOR_ESTADO[valor] || "b-gris")}>{texto}</span>;
+    let v = valor;
+    if (condicionDeuda) {
+        v = condicionDeuda;
+    } else if (valor === "VENCIDA") {
+        if (diasAtraso !== undefined && diasAtraso !== null) {
+            v = Number(diasAtraso) > 30 ? "MOROSO" : "DEUDOR";
+        }
+    }
+    const texto = TEXTO_ESTADO[v] || (v.charAt(0) + v.slice(1).toLowerCase());
+    return <span className={"badge " + (COLOR_ESTADO[v] || "b-gris")}>{texto}</span>;
 }
 
 function Cargando({ error }) {
@@ -180,119 +195,15 @@ function exportarCSV(nombre, columnas, filas) {
 //  CUOTAS: RF-010, RF-011, RF-012, RF-013, RF-014, RF-015, RF-023
 // =============================================================
 
-/** RF-010 Generar cuota mensual + RF-011 Calcular monto (reparto del gasto del mes). */
+/** GenerarCuota se unifico dentro de Conceptos de cobro */
 function GenerarCuota() {
-    const [conceptos] = useDatos("/api/conceptos");
-    const sig = new Date(); sig.setMonth(sig.getMonth() + 1);
-    const [periodo, setPeriodo] = useState(sig.toISOString().substring(0, 7));
-    const [vencimiento, setVencimiento] = useState("");
-    const [gastos, setGastos] = useState({});
-    const [calculo, setCalculo] = useState(null);
-    const [res, setRes] = useState(null);
-    const [enviando, setEnviando] = useState(false);
-
-    // Por defecto se propone el monto base de cada concepto
-    useEffect(() => {
-        if (conceptos) {
-            const g = {};
-            conceptos.forEach((c) => (g[c.id_concepto] = c.monto_base));
-            setGastos(g);
-        }
-    }, [conceptos]);
-
-    // Vencimiento por defecto: ultimo dia del periodo
-    useEffect(() => {
-        if (periodo) {
-            const [a, m] = periodo.split("-").map(Number);
-            setVencimiento(`${periodo}-${String(new Date(a, m, 0).getDate()).padStart(2, "0")}`);
-        }
-    }, [periodo]);
-
-    const listaGastos = () => Object.keys(gastos).map((id) => ({ id_concepto: Number(id), monto: gastos[id] }));
-
-    const calcular = async () => {
-        setRes(null);
-        try {
-            setCalculo(await API.post("/api/cuotas/calcular", { gastos: listaGastos() }));
-        } catch (e) {
-            setCalculo(null);
-            setRes({ ok: false, titulo: "¡Error en el cálculo!", mensaje: e.message });
-        }
-    };
-
-    const generar = async () => {
-        setEnviando(true);
-        try {
-            const r = await API.post("/api/cuotas/generar", { periodo, fecha_vencimiento: vencimiento, gastos: listaGastos() });
-            setCalculo(r);
-            setRes({ ok: true, titulo: "¡Cuotas Mensuales Generadas Exitosamente!", mensaje: r.mensaje });
-        } catch (e) {
-            setRes({ ok: false, titulo: "¡No se pudo generar la cuota!", mensaje: e.message });
-        }
-        setEnviando(false);
-    };
-
-    if (!conceptos) return <Cargando />;
-    return (
-        <div className="card">
-            <h2>Generar cuota mensual de mantenimiento</h2>
-            <Alerta tipo="info">
-                Ingrese cuánto gastó el edificio este mes en cada concepto. El total se reparte en partes iguales
-                entre los departamentos activos y se genera la cuota de cada uno.
-            </Alerta>
-            <Resultado res={res} />
-            <div className="grid">
-                <Campo label="Periodo de Cobro:">
-                    <input type="month" value={periodo} onChange={(e) => setPeriodo(e.target.value)} />
-                </Campo>
-                <Campo label="Fecha de Vencimiento:">
-                    <input type="date" value={vencimiento} onChange={(e) => setVencimiento(e.target.value)} />
-                </Campo>
-            </div>
-
-            <h3>Gastos del mes ({periodoTexto(periodo)})</h3>
-            <div className="tabla-responsive">
-                <table>
-                    <thead><tr><th>Concepto</th><th>Tipo</th><th className="num">Monto base</th><th style={{ width: 180 }}>Gasto real del mes (S/.)</th></tr></thead>
-                    <tbody>
-                        {conceptos.map((c) => (
-                            <tr key={c.id_concepto}>
-                                <td>{c.nombre_concepto}</td>
-                                <td>{c.tipo_concepto}</td>
-                                <td className="num">{soles(c.monto_base)}</td>
-                                <td>
-                                    <input type="number" step="0.01" min="0" value={gastos[c.id_concepto] ?? ""}
-                                        className={gastos[c.id_concepto] === "" ? "invalido" : ""}
-                                        onChange={(e) => { setGastos({ ...gastos, [c.id_concepto]: e.target.value }); setCalculo(null); }} />
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-
-            {calculo && (
-                <div className="kpis" style={{ marginTop: 16 }}>
-                    <div className="kpi"><span>Gasto total del edificio</span><strong>{soles(calculo.total_edificio)}</strong></div>
-                    <div className="kpi"><span>Departamentos activos</span><strong>{calculo.unidades}</strong></div>
-                    <div className="kpi"><span>Sin vigilancia (101, 301, 401, 402, 502)</span><strong>{soles(calculo.monto_sin_vigilancia)}</strong></div>
-                    <div className="kpi ok-kpi"><span>Aporte final con vigilancia (15 dptos)</span><strong>{soles(calculo.monto_por_unidad)}</strong></div>
-                </div>
-            )}
-
-            <div className="acciones" style={{ marginTop: 16 }}>
-                <button className="btn blanco" onClick={calcular}>Calcular monto de cuota</button>
-                <button className="btn verde" onClick={generar} disabled={enviando}>
-                    {enviando ? "Generando..." : "Generar y notificar cuotas"}
-                </button>
-            </div>
-        </div>
-    );
+    return <Conceptos />;
 }
 
 /** RF-012 Consultar cuota (lista) con acciones segun el rol. */
 function ListaCuotas({ usuario, ir }) {
     const esAdmin = usuario.rol === "ADMINISTRADOR";
+    const esGestion = esAdmin || usuario.rol === "JUNTA DIRECTIVA" || usuario.rol === "JUNTA";
     const [periodos] = useDatos("/api/cuotas/periodos");
     const [periodo, setPeriodo] = useState("");
     const [estado, setEstado] = useState("");
@@ -306,6 +217,20 @@ function ListaCuotas({ usuario, ir }) {
             const r = await API.post("/api/cuotas/detectar-vencidas");
             setRes({ ok: true, titulo: "Detección de cuotas vencidas", mensaje: r.mensaje });
             recargar();
+        } catch (e) { setRes({ ok: false, mensaje: e.message }); }
+    };
+
+    const enviarRecordatorio = async (c) => {
+        try {
+            const r = await API.post(`/api/cuotas/${c.id_cuota}/recordatorio`);
+            setRes({ ok: true, titulo: "Recordatorio enviado", mensaje: r.mensaje });
+        } catch (e) { setRes({ ok: false, mensaje: e.message }); }
+    };
+
+    const recordatorioMasivo = async () => {
+        try {
+            const r = await API.post(`/api/cuotas/recordatorio-masivo${periodo ? "?periodo=" + periodo : ""}`);
+            setRes({ ok: true, titulo: "Recordatorio masivo de cobro", mensaje: r.mensaje });
         } catch (e) { setRes({ ok: false, mensaje: e.message }); }
     };
 
@@ -323,10 +248,10 @@ function ListaCuotas({ usuario, ir }) {
 
     return (
         <div className="card">
-            <h2>{esAdmin ? "Cuotas de mantenimiento" : "Mis cuotas de mantenimiento"}</h2>
+            <h2>{esGestion ? "Cuotas de mantenimiento emitidas" : "Mis cuotas de mantenimiento"}</h2>
             <Resultado res={res} />
             <div className="barra">
-                {esAdmin && (
+                {esGestion && (
                     <Campo label="Buscar por nombre:">
                         <input
                             type="text"
@@ -350,14 +275,15 @@ function ListaCuotas({ usuario, ir }) {
                         <option value="VENCIDA">Vencida</option>
                     </select>
                 </Campo>
-                {esAdmin && <button className="btn gris" onClick={detectar}>Detectar cuotas vencidas</button>}
+                {esAdmin && <button className="btn gris" onClick={detectar}>Detectar vencidas</button>}
+                {esGestion && <button className="btn blanco" title="Enviar recordatorio de cobro a todos los pendientes" onClick={recordatorioMasivo}>Recordatorio masivo</button>}
             </div>
             {!cuotas ? <Cargando error={error} /> : (
                 <div className="tabla-responsive">
                     <table>
                         <thead>
                             <tr>
-                                <th>Periodo</th>{esAdmin && <th>Unidad</th>}{esAdmin && <th>Propietario</th>}
+                                <th>Periodo</th>{esGestion && <th>Unidad</th>}{esGestion && <th>Propietario</th>}
                                 <th>Vence</th><th className="num">Monto</th><th className="num">Pagado</th>
                                 <th className="num">Saldo</th><th>Estado</th><th>Acciones</th>
                             </tr>
@@ -367,8 +293,8 @@ function ListaCuotas({ usuario, ir }) {
                             {cuotasFiltradas.map((c) => (
                                 <tr key={c.id_cuota}>
                                     <td>{periodoTexto(c.periodo)}</td>
-                                    {esAdmin && <td>{c.unidad}</td>}
-                                    {esAdmin && <td>{c.propietario || "-"}</td>}
+                                    {esGestion && <td>{c.unidad}</td>}
+                                    {esGestion && <td>{c.propietario || "-"}</td>}
                                     <td>{fechaTexto(c.fecha_vencimiento)}</td>
                                     <td className="num">{Number(c.monto_total).toFixed(2)}</td>
                                     <td className="num">{Number(c.monto_pagado).toFixed(2)}</td>
@@ -377,13 +303,15 @@ function ListaCuotas({ usuario, ir }) {
                                         {Number(c.monto_en_revision) > 0 ? (
                                             <span className="badge b-amarillo">Pagado en revisión</span>
                                         ) : (
-                                            <Estado valor={c.estado_cuota} />
+                                            <Estado valor={c.estado_cuota} diasAtraso={c.dias_atraso} condicionDeuda={c.condicion_deuda} />
                                         )}
                                     </td>
                                     <td className="acciones">
                                         <button className="btn chico blanco" onClick={() => setSeleccion({ id: c.id_cuota, modo: "aviso" })}>Aviso</button>
                                         {esAdmin && c.estado_cuota !== "PAGADA" && Number(c.monto_pagado) === 0 &&
                                             <button className="btn chico gris" onClick={() => setSeleccion({ id: c.id_cuota, modo: "editar" })}>Editar</button>}
+                                        {esGestion && c.estado_cuota !== "PAGADA" &&
+                                            <button className="btn chico blanco" title="Enviar recordatorio de cobro" onClick={() => enviarRecordatorio(c)}>Recordatorio</button>}
                                         {c.estado_cuota !== "PAGADA" && Number(c.saldo) - Number(c.monto_en_revision) > 0 &&
                                             <button className="btn chico verde" onClick={() => ir("registrar-pago", { idCuota: c.id_cuota })}>Pagar</button>}
                                     </td>
@@ -416,7 +344,7 @@ function AvisoCobro({ idCuota, volver }) {
                     <div><b>Propietario:</b> {c.propietario || "-"}</div>
                     <div><b>Unidad:</b> {c.unidad}</div>
                     <div><b>Periodo:</b> {periodoTexto(c.periodo)}</div>
-                    <div><b>Estado:</b> {Number(c.monto_en_revision) > 0 ? <span className="badge b-amarillo">Pagado en revisión</span> : <Estado valor={c.estado_cuota} />}</div>
+                    <div><b>Estado:</b> {Number(c.monto_en_revision) > 0 ? <span className="badge b-amarillo">Pagado en revisión</span> : <Estado valor={c.estado_cuota} diasAtraso={c.dias_atraso} condicionDeuda={c.condicion_deuda} />}</div>
                     <div><b>Fecha de emisión:</b> {fechaTexto(c.fecha_emision)}</div>
                     <div><b>Fecha de vencimiento:</b> {fechaTexto(c.fecha_vencimiento)}</div>
                 </div>
@@ -554,7 +482,7 @@ function EstadoCuenta({ usuario, ir }) {
                                                 {Number(c.monto_en_revision) > 0 ? (
                                                     <span className="badge b-amarillo">Pagado en revisión</span>
                                                 ) : (
-                                                    <Estado valor={c.estado_cuota} />
+                                                    <Estado valor={c.estado_cuota} diasAtraso={c.dias_atraso} condicionDeuda={c.condicion_deuda} />
                                                 )}
                                             </td>
                                             {!esAdmin && <td>{c.estado_cuota !== "PAGADA" && Number(c.saldo) - Number(c.monto_en_revision) > 0 &&
@@ -705,20 +633,31 @@ function RegistrarPago({ usuario, params, ir }) {
     );
 }
 
-/** RF-018 Consultar pagos / RF-019 Validar / RF-020 Rechazar / RF-049 Ver comprobante. */
+/** RF-018 Consultar pagos / RF-019 Aprobar comprobante / RF-020 Rechazar / Anular pago. */
 function ListaPagos({ usuario }) {
     const esAdmin = usuario.rol === "ADMINISTRADOR";
+    const esGestion = esAdmin || usuario.rol === "JUNTA DIRECTIVA" || usuario.rol === "JUNTA";
     const [estado, setEstado] = useState(esAdmin ? "EN_REVISION" : "");
     const [busqueda, setBusqueda] = useState("");
     const [pagos, recargar, error] = useDatos(`/api/pagos?estado=${estado}`);
     const [rechazo, setRechazo] = useState(null); // {id, motivo}
     const [res, setRes] = useState(null);
 
-    const validar = async (p) => {
-        if (!confirm(`¿Validar el pago ${p.nro_operacion || "#" + p.id_pago} de ${p.unidad} por ${soles(p.monto_pagado)}?`)) return;
+    const aprobarComprobante = async (p) => {
+        if (!confirm(`¿Aprobar el comprobante de pago ${p.nro_operacion || "#" + p.id_pago} de ${p.unidad} por ${soles(p.monto_pagado)}?\nEl sistema emitirá automáticamente la constancia de pago.`)) return;
         try {
-            const r = await API.post(`/api/pagos/${p.id_pago}/validar`);
-            setRes({ ok: true, titulo: "¡Comprobante Validado Exitosamente!", mensaje: r.mensaje });
+            const r = await API.post(`/api/pagos/${p.id_pago}/aprobar`);
+            setRes({ ok: true, titulo: "¡Comprobante Aprobado!", mensaje: r.mensaje });
+            recargar();
+        } catch (e) { setRes({ ok: false, mensaje: e.message }); }
+    };
+
+    const anular = async (p) => {
+        const motivo = prompt(`¿Desea anular el pago #${p.id_pago} de ${p.unidad} (${soles(p.monto_pagado)})?\nIngrese el motivo de anulación:`, "Pago anulado por la administración");
+        if (motivo === null) return;
+        try {
+            const r = await API.post(`/api/pagos/${p.id_pago}/anular`, { motivo });
+            setRes({ ok: true, titulo: "Pago Anulado", mensaje: r.mensaje });
             recargar();
         } catch (e) { setRes({ ok: false, mensaje: e.message }); }
     };
@@ -746,14 +685,14 @@ function ListaPagos({ usuario }) {
 
     return (
         <div className="card">
-            <h2>{esAdmin ? "Pagos registrados y validación de comprobantes" : "Mis pagos realizados"}</h2>
-            {!esAdmin && <div className="grid" style={{ marginBottom: 14 }}>
+            <h2>{esGestion ? "Pagos registrados y aprobación de comprobantes" : "Mis pagos realizados"}</h2>
+            {!esGestion && <div className="grid" style={{ marginBottom: 14 }}>
                 <Campo label="Propietario:"><input disabled value={usuario.nombreCompleto} /></Campo>
                 <Campo label="Unidad Inmobiliaria:"><input disabled value={usuario.unidad || "-"} /></Campo>
             </div>}
             <Resultado res={res} />
             {rechazo && (
-                <Alerta tipo="warn" titulo={"Rechazar pago #" + rechazo.id}>
+                <Alerta tipo="warn" titulo={"Rechazar comprobante de pago #" + rechazo.id}>
                     <textarea rows="2" placeholder="Motivo del rechazo (obligatorio)" value={rechazo.motivo}
                         onChange={(e) => setRechazo({ ...rechazo, motivo: e.target.value })} />
                     <div className="acciones" style={{ marginTop: 8 }}>
@@ -775,8 +714,9 @@ function ListaPagos({ usuario }) {
                     <select value={estado} onChange={(e) => setEstado(e.target.value)}>
                         <option value="">Todos</option>
                         <option value="EN_REVISION">Pagado en revisión</option>
-                        <option value="VALIDADO">Validado</option>
+                        <option value="VALIDADO">Aprobado / Validado</option>
                         <option value="RECHAZADO">Rechazado</option>
+                        <option value="ANULADO">Anulado</option>
                     </select>
                 </Campo>
             </div>
@@ -785,7 +725,7 @@ function ListaPagos({ usuario }) {
                     <table>
                         <thead>
                             <tr>
-                                <th>Fecha Operación</th>{esAdmin && <th>Unidad</th>}<th>Concepto</th><th>N° Operación / Voucher</th>
+                                <th>Fecha Operación</th>{esGestion && <th>Unidad</th>}<th>Concepto</th><th>N° Operación / Voucher</th>
                                 <th>Método</th><th className="num">Monto (S/.)</th><th>Estado</th><th>Acciones</th>
                             </tr>
                         </thead>
@@ -794,7 +734,7 @@ function ListaPagos({ usuario }) {
                             {pagosFiltrados.map((p) => (
                                 <tr key={p.id_pago}>
                                     <td>{fechaTexto(p.fecha_pago)}</td>
-                                    {esAdmin && <td>{p.unidad}<div className="ayuda">{p.usuario}</div></td>}
+                                    {esGestion && <td>{p.unidad}<div className="ayuda">{p.usuario}</div></td>}
                                     <td>Cuota Mantenimiento - {periodoTexto(p.periodo)}</td>
                                     <td>{p.nro_operacion || "-"}</td>
                                     <td>{p.metodo_pago || "No especificado"}</td>
@@ -807,9 +747,12 @@ function ListaPagos({ usuario }) {
                                         {p.id_comprobante && <a className="btn chico blanco" href={API.urlComprobante(p.id_comprobante)} target="_blank">Comprobante</a>}
                                         {p.numero_recibo && <span className="badge b-azul">{p.numero_recibo}</span>}
                                         {esAdmin && p.estado_pago === "EN_REVISION" && <>
-                                            <button className="btn chico verde" onClick={() => validar(p)}>Validar</button>
+                                            <button className="btn chico verde" title="Aprobar comprobante y emitir constancia" onClick={() => aprobarComprobante(p)}>Aprobar</button>
                                             <button className="btn chico rojo" onClick={() => setRechazo({ id: p.id_pago, motivo: "" })}>Rechazar</button>
                                         </>}
+                                        {esAdmin && p.estado_pago !== "ANULADO" && (
+                                            <button className="btn chico gris" title="Anular pago y revertir cuota" onClick={() => anular(p)}>Anular</button>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -974,11 +917,12 @@ function Dashboard({ ir }) {
             <div className="kpis">
                 <div className="kpi"><span>Departamentos activos</span><strong>{d.unidades}</strong></div>
                 <div className="kpi alerta-kpi"><span>Pagos por validar</span><strong>{d.pagos_en_revision}</strong></div>
-                <div className="kpi"><span>Departamentos morosos</span><strong style={{ color: "#b91c1c" }}>{d.unidades_morosas}</strong></div>
+                <div className="kpi"><span>Morosos (&gt; 30 días)</span><strong style={{ color: "#b91c1c" }}>{d.total_morosos ?? d.unidades_morosas}</strong></div>
+                <div className="kpi"><span>Deudores (&le; 30 días)</span><strong style={{ color: "#d97706" }}>{d.total_deudores ?? 0}</strong></div>
                 <div className="kpi"><span>Deuda vencida ({d.cuotas_vencidas} cuotas)</span><strong style={{ color: "#b91c1c" }}>{soles(d.deuda_vencida)}</strong></div>
             </div>
             <div className="acciones">
-                <button className="btn verde" onClick={() => ir("generar")}>Generar cuota del mes</button>
+                <button className="btn verde" onClick={() => ir("conceptos")}>Conceptos y cálculo de cuotas</button>
                 <button className="btn" onClick={() => ir("pagos")}>Validar pagos ({d.pagos_en_revision})</button>
                 <button className="btn rojo" onClick={() => ir("morosidad")}>Ver morosidad</button>
             </div>
@@ -986,7 +930,7 @@ function Dashboard({ ir }) {
     );
 }
 
-/** RF-001 Registrar propietario o residente / RF-006 Asignar roles / RF-008 Desactivar usuario */
+/** RF-001 Registrar usuario / RF-006 Roles / Consultar usuarios / Reactivar usuario */
 function Usuarios() {
     const [usuarios, recargar, error] = useDatos("/api/usuarios");
     const [roles] = useDatos("/api/roles");
@@ -994,6 +938,8 @@ function Usuarios() {
     const vacio = { nombre: "", apellido: "", dni: "", id_unidad: "", id_rol: "2", correo: "", telefono: "", fecha_nacimiento: "", direccion: "", contrasena: "" };
     const [f, setF] = useState(vacio);
     const [busqueda, setBusqueda] = useState("");
+    const [filtroRol, setFiltroRol] = useState("");
+    const [filtroEstado, setFiltroEstado] = useState("");
     const [res, setRes] = useState(null);
     const c = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
@@ -1012,10 +958,11 @@ function Usuarios() {
     };
 
     const cambiarEstado = async (u, confirmar) => {
-        const estado = u.estado_cuenta === "ACTIVO" ? "INACTIVO" : "ACTIVO";
+        const nuevoEstado = u.estado_cuenta === "ACTIVO" ? "INACTIVO" : "ACTIVO";
         try {
-            const r = await API.put(`/api/usuarios/${u.id_usuario}/estado`, { estado, confirmar: !!confirmar });
-            setRes({ ok: true, mensaje: r.mensaje }); recargar();
+            const r = await API.put(`/api/usuarios/${u.id_usuario}/estado`, { estado: nuevoEstado, confirmar: !!confirmar });
+            setRes({ ok: true, titulo: nuevoEstado === "ACTIVO" ? "Usuario Reactivado" : "Usuario Desactivado", mensaje: r.mensaje });
+            recargar();
         } catch (er) {
             // 409 = tiene cuotas pendientes -> se pide confirmacion
             if (er.status === 409 && confirm(er.message)) return cambiarEstado(u, true);
@@ -1024,12 +971,15 @@ function Usuarios() {
     };
 
     const usuariosFiltrados = (usuarios || []).filter((u) => {
+        if (filtroRol && String(u.id_rol) !== String(filtroRol)) return false;
+        if (filtroEstado && u.estado_cuenta !== filtroEstado) return false;
         if (!busqueda.trim()) return true;
         const b = busqueda.toLowerCase();
         return (u.nombre && u.nombre.toLowerCase().includes(b)) ||
                (u.apellido && u.apellido.toLowerCase().includes(b)) ||
                (u.dni && u.dni.includes(b)) ||
-               (u.unidad && u.unidad.toLowerCase().includes(b));
+               (u.unidad && u.unidad.toLowerCase().includes(b)) ||
+               (u.correo && u.correo.toLowerCase().includes(b));
     });
 
     return (
@@ -1063,15 +1013,28 @@ function Usuarios() {
                 </form>
             </div>
             <div className="card">
-                <h2>Usuarios del sistema</h2>
+                <h2>Consultar usuarios del sistema</h2>
                 <div className="barra">
-                    <Campo label="Buscar por nombre o DNI:">
+                    <Campo label="Buscar por nombre, DNI o dpto:">
                         <input
                             type="text"
-                            placeholder="Nombre, apellido o DNI..."
+                            placeholder="Nombre, apellido, DNI, correo..."
                             value={busqueda}
                             onChange={(e) => setBusqueda(e.target.value)}
                         />
+                    </Campo>
+                    <Campo label="Filtrar por Rol:">
+                        <select value={filtroRol} onChange={(e) => setFiltroRol(e.target.value)}>
+                            <option value="">Todos los roles</option>
+                            {(roles || []).map((r) => <option key={r.id_rol} value={r.id_rol}>{r.nombre_rol}</option>)}
+                        </select>
+                    </Campo>
+                    <Campo label="Filtrar por Estado:">
+                        <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+                            <option value="">Todos los estados</option>
+                            <option value="ACTIVO">Activo</option>
+                            <option value="INACTIVO">Inactivo</option>
+                        </select>
                     </Campo>
                 </div>
                 {!usuarios ? <Cargando error={error} /> : (
@@ -1094,8 +1057,12 @@ function Usuarios() {
                                         </td>
                                         <td><Estado valor={u.estado_cuenta} /></td>
                                         <td>
-                                            <button className={"btn chico " + (u.estado_cuenta === "ACTIVO" ? "rojo" : "verde")} onClick={() => cambiarEstado(u)}>
-                                                {u.estado_cuenta === "ACTIVO" ? "Desactivar" : "Activar"}
+                                            <button
+                                                className={"btn chico " + (u.estado_cuenta === "ACTIVO" ? "rojo" : "verde")}
+                                                onClick={() => cambiarEstado(u)}
+                                                title={u.estado_cuenta === "ACTIVO" ? "Desactivar cuenta de usuario" : "Reactivar cuenta de usuario"}
+                                            >
+                                                {u.estado_cuenta === "ACTIVO" ? "Desactivar" : "Reactivar"}
                                             </button>
                                         </td>
                                     </tr>
@@ -1109,23 +1076,42 @@ function Usuarios() {
     );
 }
 
-/** RF-002 Registrar unidad del edificio / RF-048 Historial de pagos por unidad */
+/** RF-002 Registrar unidad / Modificar unidad / RF-048 Historial de pagos por unidad */
 function Unidades() {
     const [unidades, recargar, error] = useDatos("/api/unidades");
     const [f, setF] = useState({ bloque: "Piso 1", numero_unidad: "", estado: "ACTIVA" });
+    const [editando, setEditando] = useState(null); // unidad en edicion
     const [res, setRes] = useState(null);
     const [historial, setHistorial] = useState(null);
     const [busquedaUnidad, setBusquedaUnidad] = useState("");
     const [busquedaHist, setBusquedaHist] = useState("");
     const [pagos] = useDatos(historial ? `/api/pagos?idUnidad=${historial.id_unidad}` : null);
 
-    const registrar = async (e) => {
+    const guardar = async (e) => {
         e.preventDefault();
         try {
-            const r = await API.post("/api/unidades", f);
-            setRes({ ok: true, titulo: "¡Unidad registrada!", mensaje: r.mensaje });
-            setF({ ...f, numero_unidad: "" }); recargar();
+            if (editando) {
+                const r = await API.put(`/api/unidades/${editando.id_unidad}`, f);
+                setRes({ ok: true, titulo: "¡Unidad modificada!", mensaje: r.mensaje });
+                setEditando(null);
+            } else {
+                const r = await API.post("/api/unidades", f);
+                setRes({ ok: true, titulo: "¡Unidad registrada!", mensaje: r.mensaje });
+            }
+            setF({ bloque: "Piso 1", numero_unidad: "", estado: "ACTIVA" });
+            recargar();
         } catch (er) { setRes({ ok: false, mensaje: er.message }); }
+    };
+
+    const iniciarEdicion = (u) => {
+        setEditando(u);
+        setF({ bloque: u.bloque, numero_unidad: u.numero_unidad, estado: u.estado });
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
+    const cancelarEdicion = () => {
+        setEditando(null);
+        setF({ bloque: "Piso 1", numero_unidad: "", estado: "ACTIVA" });
     };
 
     const cambiarEstado = async (u) => {
@@ -1151,17 +1137,20 @@ function Unidades() {
     return (
         <>
             <div className="card">
-                <h2>Registrar departamento por piso</h2>
+                <h2>{editando ? `Modificar departamento — ${editando.bloque} Dpto. ${editando.numero_unidad}` : "Registrar departamento por piso"}</h2>
                 <Resultado res={res} />
-                <form onSubmit={registrar} className="grid3">
-                    <Campo label="Piso:"><input value={f.bloque} placeholder="ej. Piso 1" onChange={(e) => setF({ ...f, bloque: e.target.value })} /></Campo>
+                <form onSubmit={guardar} className="grid3">
+                    <Campo label="Piso o Bloque:"><input value={f.bloque} placeholder="ej. Piso 1" onChange={(e) => setF({ ...f, bloque: e.target.value })} /></Campo>
                     <Campo label="N° de departamento:"><input value={f.numero_unidad} placeholder="ej. 101" onChange={(e) => setF({ ...f, numero_unidad: e.target.value })} /></Campo>
                     <Campo label="Estado:">
                         <select value={f.estado} onChange={(e) => setF({ ...f, estado: e.target.value })}>
                             <option value="ACTIVA">Activa</option><option value="INACTIVA">Inactiva</option>
                         </select>
                     </Campo>
-                    <div className="full"><button className="btn verde">Registrar Unidad</button></div>
+                    <div className="full acciones">
+                        <button className="btn verde">{editando ? "Guardar Modificación" : "Registrar Unidad"}</button>
+                        {editando && <button type="button" className="btn gris" onClick={cancelarEdicion}>Cancelar Edición</button>}
+                    </div>
                 </form>
             </div>
             {historial && (
@@ -1227,6 +1216,7 @@ function Unidades() {
                                         <td>{u.propietario || <i>Sin propietario</i>}</td>
                                         <td><Estado valor={u.estado} /></td>
                                         <td className="acciones">
+                                            <button className="btn chico blanco" title="Modificar piso, número o estado de la unidad" onClick={() => iniciarEdicion(u)}>Editar</button>
                                             <button className="btn chico blanco" onClick={() => setHistorial(u)}>Historial de pagos</button>
                                             <button className="btn chico gris" onClick={() => cambiarEstado(u)}>{u.estado === "ACTIVA" ? "Inactivar" : "Activar"}</button>
                                         </td>
@@ -1241,32 +1231,284 @@ function Unidades() {
     );
 }
 
-/** RF-009 Configurar conceptos de cobro (gastos del edificio) */
+/** RF-009 / RF-010 / RF-011 / RF-030 Conceptos de cobro, cálculo mensual e historial de pagos de inquilinos */
 function Conceptos() {
-    const [conceptos, recargar, error] = useDatos("/api/conceptos");
-    const vacio = { id_concepto: null, nombre_concepto: "", tipo_concepto: "VARIABLE", monto_base: "" };
+    const [conceptos, recargarConceptos, error] = useDatos("/api/conceptos");
+    const [periodos] = useDatos("/api/cuotas/periodos");
+    const [cuotas, recargarCuotas] = useDatos("/api/cuotas");
+    const [pagos] = useDatos("/api/pagos");
+
+    // Formulario de nuevo concepto
+    const vacio = { id_concepto: null, nombre_concepto: "", tipo_concepto: "COBRO", monto_base: "" };
     const [f, setF] = useState(vacio);
+    const [filtroTipo, setFiltroTipo] = useState("");
     const [res, setRes] = useState(null);
 
-    const guardar = async (e) => {
+    // Calculo y generacion mensual
+    const sig = new Date(); sig.setMonth(sig.getMonth() + 1);
+    const [periodoGen, setPeriodoGen] = useState(sig.toISOString().substring(0, 7));
+    const [vencimiento, setVencimiento] = useState("");
+    const [gastos, setGastos] = useState({});
+    const [calculo, setCalculo] = useState(null);
+    const [enviando, setEnviando] = useState(false);
+
+    // Historial de pagos por mes e inquilino
+    const [mesHistorial, setMesHistorial] = useState("2026-10");
+    const [busquedaInquilino, setBusquedaInquilino] = useState("");
+
+    // Por defecto se propone el monto base de cada concepto
+    useEffect(() => {
+        if (conceptos) {
+            const g = {};
+            conceptos.forEach((c) => (g[c.id_concepto] = c.monto_base));
+            setGastos(g);
+        }
+    }, [conceptos]);
+
+    // Vencimiento por defecto: ultimo dia del periodo
+    useEffect(() => {
+        if (periodoGen) {
+            const [a, m] = periodoGen.split("-").map(Number);
+            setVencimiento(`${periodoGen}-${String(new Date(a, m, 0).getDate()).padStart(2, "0")}`);
+        }
+    }, [periodoGen]);
+
+    const guardarConcepto = async (e) => {
         e.preventDefault();
         try {
             const r = f.id_concepto ? await API.put(`/api/conceptos/${f.id_concepto}`, f) : await API.post("/api/conceptos", f);
             setRes({ ok: true, titulo: "¡Concepto guardado!", mensaje: r.mensaje });
-            setF(vacio); recargar();
+            setF(vacio); recargarConceptos();
         } catch (er) { setRes({ ok: false, mensaje: er.message }); }
     };
 
+    const listaGastos = () => Object.keys(gastos).map((id) => ({ id_concepto: Number(id), monto: gastos[id] }));
+
+    const calcular = async () => {
+        setRes(null);
+        try {
+            setCalculo(await API.post("/api/cuotas/calcular", { gastos: listaGastos() }));
+        } catch (e) {
+            setCalculo(null);
+            setRes({ ok: false, titulo: "¡Error en el cálculo!", mensaje: e.message });
+        }
+    };
+
+    const generar = async () => {
+        setEnviando(true);
+        try {
+            const r = await API.post("/api/cuotas/generar", { periodo: periodoGen, fecha_vencimiento: vencimiento, gastos: listaGastos() });
+            setCalculo(r);
+            setRes({ ok: true, titulo: "¡Cuotas Generadas y Notificadas!", mensaje: r.mensaje });
+            recargarCuotas();
+        } catch (e) {
+            setRes({ ok: false, titulo: "¡No se pudo generar la cuota!", mensaje: e.message });
+        }
+        setEnviando(false);
+    };
+
+    if (!conceptos) return <Cargando error={error} />;
+
+    // Filtrado de cuotas para el historial de pagos de inquilinos
+    const cuotasHistFiltradas = (cuotas || []).filter((c) => {
+        if (mesHistorial && c.periodo !== mesHistorial) return false;
+        if (!busquedaInquilino.trim()) return true;
+        const b = busquedaInquilino.toLowerCase();
+        return (c.propietario && c.propietario.toLowerCase().includes(b)) ||
+               (c.unidad && c.unidad.toLowerCase().includes(b));
+    });
+
+    // Suma de los pagos del mes seleccionado
+    const totalPagadoMes = cuotasHistFiltradas.reduce((acc, c) => acc + Number(c.monto_pagado || 0), 0);
+    const totalCuotasMes = cuotasHistFiltradas.reduce((acc, c) => acc + Number(c.monto_total || 0), 0);
+    const inquilinosPagados = cuotasHistFiltradas.filter((c) => c.estado_cuota === "PAGADA" || Number(c.monto_pagado) > 0).length;
+
+    // Mapa de metodos de pago por cuota
+    const mapaPagos = {};
+    (pagos || []).forEach((p) => {
+        if (p.id_cuota && (!mapaPagos[p.id_cuota] || p.estado_pago === "VALIDADO")) {
+            mapaPagos[p.id_cuota] = p;
+        }
+    });
+
+    const conceptosFiltrados = (conceptos || []).filter((k) => {
+        if (!filtroTipo) return true;
+        return k.tipo_concepto === filtroTipo;
+    });
+
     return (
-        <>
+        <div>
+            {/* 1. SECCION DE CALCULO Y EMISION MENSUAL */}
             <div className="card">
-                <h2>{f.id_concepto ? "Editar concepto de cobro" : "Nuevo concepto de cobro"}</h2>
+                <h2>Cálculo y distribución de cuota mensual según gastos</h2>
+                <Alerta tipo="info">
+                    Ingrese el gasto real del mes en cada concepto. El sistema suma los gastos del edificio y los divide entre los 20 departamentos para calcular y emitir la cuota de cada uno.
+                </Alerta>
                 <Resultado res={res} />
-                <form onSubmit={guardar} className="grid3">
-                    <Campo label="Nombre del concepto:"><input value={f.nombre_concepto} onChange={(e) => setF({ ...f, nombre_concepto: e.target.value })} /></Campo>
-                    <Campo label="Tipo:" ayuda="FIJO: igual cada mes · VARIABLE: depende del consumo">
+                <div className="grid">
+                    <Campo label="Periodo a calcular / emitir:">
+                        <input type="month" value={periodoGen} onChange={(e) => setPeriodoGen(e.target.value)} />
+                    </Campo>
+                    <Campo label="Fecha de vencimiento:">
+                        <input type="date" value={vencimiento} onChange={(e) => setVencimiento(e.target.value)} />
+                    </Campo>
+                </div>
+
+                <h3 style={{ marginTop: 18, color: "#1e3a8a" }}>Gastos del mes por concepto ({periodoTexto(periodoGen)})</h3>
+                <div className="tabla-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Concepto</th>
+                                <th>Tipo</th>
+                                <th className="num">Monto referencial</th>
+                                <th style={{ width: 190 }}>Gasto real del mes (S/.)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {conceptos.map((c) => (
+                                <tr key={c.id_concepto}>
+                                    <td><b>{c.nombre_concepto}</b></td>
+                                    <td><span className="badge b-azul">{c.tipo_concepto}</span></td>
+                                    <td className="num">{soles(c.monto_base)}</td>
+                                    <td>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={gastos[c.id_concepto] ?? ""}
+                                            className={gastos[c.id_concepto] === "" ? "invalido" : ""}
+                                            onChange={(e) => {
+                                                setGastos({ ...gastos, [c.id_concepto]: e.target.value });
+                                                setCalculo(null);
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {calculo && (
+                    <div className="kpis" style={{ marginTop: 16 }}>
+                        <div className="kpi"><span>Gasto total del edificio</span><strong>{soles(calculo.total_edificio)}</strong></div>
+                        <div className="kpi"><span>Departamentos activos</span><strong>{calculo.unidades}</strong></div>
+                        <div className="kpi"><span>Sin vigilancia (101, 301, 401, 402, 502)</span><strong>{soles(calculo.monto_sin_vigilancia)}</strong></div>
+                        <div className="kpi ok-kpi"><span>Aporte con vigilancia (15 dptos)</span><strong>{soles(calculo.monto_por_unidad)}</strong></div>
+                    </div>
+                )}
+
+                <div className="acciones" style={{ marginTop: 16 }}>
+                    <button className="btn blanco" onClick={calcular}>Calcular monto de cuota</button>
+                    <button className="btn verde" onClick={generar} disabled={enviando}>
+                        {enviando ? "Generando..." : "Generar y notificar cuotas"}
+                    </button>
+                </div>
+            </div>
+
+            {/* 2. HISTORIAL DE PAGOS DE LOS ANTERIORES MESES POR INQUILINO Y SUMA DEL MES */}
+            <div className="card">
+                <h2>Historial de pagos de inquilinos de anteriores meses</h2>
+                <p style={{ color: "#475569", margin: "4px 0 14px 0" }}>
+                    Registro histórico y detalle de los pagos realizados por cada inquilino / propietario según los datos del edificio (Agosto, Septiembre y Octubre 2026).
+                </p>
+
+                <div className="barra">
+                    <Campo label="Seleccionar mes / periodo:">
+                        <select value={mesHistorial} onChange={(e) => setMesHistorial(e.target.value)}>
+                            <option value="">Todos los meses</option>
+                            {(periodos || []).map((p) => (
+                                <option key={p} value={p}>{periodoTexto(p)}</option>
+                            ))}
+                        </select>
+                    </Campo>
+                    <Campo label="Buscar inquilino o departamento:">
+                        <input
+                            type="text"
+                            placeholder="Nombre del inquilino, piso o dpto..."
+                            value={busquedaInquilino}
+                            onChange={(e) => setBusquedaInquilino(e.target.value)}
+                        />
+                    </Campo>
+                </div>
+
+                {/* SUMA DE PAGOS DEL MES SELECCIONADO */}
+                <div className="kpis" style={{ marginTop: 12 }}>
+                    <div className="kpi ok-kpi">
+                        <span>Suma de pagos recibidos {mesHistorial ? `(${periodoTexto(mesHistorial)})` : "totales"}</span>
+                        <strong style={{ color: "#16a34a" }}>{soles(totalPagadoMes)}</strong>
+                    </div>
+                    <div className="kpi">
+                        <span>Total cuotas emitidas</span>
+                        <strong>{soles(totalCuotasMes)}</strong>
+                    </div>
+                    <div className="kpi">
+                        <span>Inquilinos que pagaron</span>
+                        <strong>{inquilinosPagados} / {cuotasHistFiltradas.length}</strong>
+                    </div>
+                    <div className="kpi alerta-kpi">
+                        <span>Saldo pendiente por cobrar</span>
+                        <strong>{soles(totalCuotasMes - totalPagadoMes)}</strong>
+                    </div>
+                </div>
+
+                <div className="tabla-responsive" style={{ marginTop: 14 }}>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Periodo</th>
+                                <th>Departamento</th>
+                                <th>Inquilino / Propietario</th>
+                                <th className="num">Cuota (S/.)</th>
+                                <th className="num">Pagado (S/.)</th>
+                                <th>Medio de Pago</th>
+                                <th>N° Operación / Voucher</th>
+                                <th>Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {cuotasHistFiltradas.length === 0 && <FilaVacia cols={8} texto="No hay registros para el mes seleccionado." />}
+                            {cuotasHistFiltradas.map((c) => {
+                                const p = mapaPagos[c.id_cuota];
+                                return (
+                                    <tr key={c.id_cuota}>
+                                        <td><b>{periodoTexto(c.periodo)}</b></td>
+                                        <td>{c.unidad}</td>
+                                        <td>{c.propietario || <i>Sin asignar</i>}</td>
+                                        <td className="num">{Number(c.monto_total).toFixed(2)}</td>
+                                        <td className="num" style={{ fontWeight: "bold", color: Number(c.monto_pagado) > 0 ? "#16a34a" : "#64748b" }}>
+                                            {Number(c.monto_pagado).toFixed(2)}
+                                        </td>
+                                        <td>{p && p.metodo_pago ? p.metodo_pago : (c.estado_cuota === "PAGADA" ? "EFECTIVO" : "-")}</td>
+                                        <td>{p && p.nro_operacion ? p.nro_operacion : "-"}</td>
+                                        <td>
+                                            {Number(c.monto_en_revision) > 0 ? (
+                                                <span className="badge b-amarillo">En revisión</span>
+                                            ) : (
+                                                <Estado valor={c.estado_cuota} diasAtraso={c.dias_atraso} condicionDeuda={c.condicion_deuda} />
+                                            )}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* 3. CATALOGO Y CONFIGURACION DE CONCEPTOS DE COBRO */}
+            <div className="card">
+                <h2>{f.id_concepto ? "Editar concepto de cobro" : "Nuevo concepto de cobro (RF-030)"}</h2>
+                <form onSubmit={guardarConcepto} className="grid3">
+                    <Campo label="Nombre del concepto:"><input value={f.nombre_concepto} placeholder="ej. Vigilancia, Agua, Limpieza..." onChange={(e) => setF({ ...f, nombre_concepto: e.target.value })} /></Campo>
+                    <Campo label="Tipo de concepto (RF-030):">
                         <select value={f.tipo_concepto} onChange={(e) => setF({ ...f, tipo_concepto: e.target.value })}>
-                            <option value="FIJO">FIJO</option><option value="VARIABLE">VARIABLE</option>
+                            <option value="COBRO">COBRO (Cuota ordinaria)</option>
+                            <option value="INGRESO">INGRESO (Aporte / Ingreso edificio)</option>
+                            <option value="EGRESO">EGRESO (Gasto / Pago de servicio)</option>
+                            <option value="FIJO">FIJO (Mismo monto mensual)</option>
+                            <option value="VARIABLE">VARIABLE (Según consumo mensual)</option>
                         </select>
                     </Campo>
                     <Campo label="Gasto mensual referencial (S/.):"><input type="number" step="0.01" value={f.monto_base} onChange={(e) => setF({ ...f, monto_base: e.target.value })} /></Campo>
@@ -1277,32 +1519,56 @@ function Conceptos() {
                 </form>
             </div>
             <div className="card">
-                <h2>Conceptos configurados</h2>
-                {!conceptos ? <Cargando error={error} /> : (
-                    <div className="tabla-responsive">
-                        <table>
-                            <thead><tr><th>Concepto</th><th>Tipo</th><th className="num">Gasto referencial (edificio)</th><th></th></tr></thead>
-                            <tbody>
-                                {conceptos.map((k) => (
-                                    <tr key={k.id_concepto}>
-                                        <td>{k.nombre_concepto}</td><td>{k.tipo_concepto}</td><td className="num">{soles(k.monto_base)}</td>
-                                        <td><button className="btn chico blanco" onClick={() => setF({ ...k })}>Editar</button></td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
+                <h2>Catálogo de conceptos configurados</h2>
+                <div className="barra">
+                    <Campo label="Filtrar por tipo:">
+                        <select value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)}>
+                            <option value="">Todos los tipos</option>
+                            <option value="COBRO">Cobro</option>
+                            <option value="INGRESO">Ingreso</option>
+                            <option value="EGRESO">Egreso</option>
+                            <option value="FIJO">Fijo</option>
+                            <option value="VARIABLE">Variable</option>
+                        </select>
+                    </Campo>
+                </div>
+                <div className="tabla-responsive">
+                    <table>
+                        <thead><tr><th>Concepto</th><th>Tipo de Concepto</th><th className="num">Gasto referencial (edificio)</th><th>Acciones</th></tr></thead>
+                        <tbody>
+                            {conceptosFiltrados.map((k) => (
+                                <tr key={k.id_concepto}>
+                                    <td><b>{k.nombre_concepto}</b></td>
+                                    <td><span className="badge b-azul">{k.tipo_concepto}</span></td>
+                                    <td className="num">{soles(k.monto_base)}</td>
+                                    <td><button className="btn chico blanco" onClick={() => { setF({ ...k }); window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); }}>Editar</button></td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             </div>
-        </>
+        </div>
     );
 }
 
-/** RF-024 Consultar morosidad / RF-025 Reporte de morosidad / RF-036 Exportar reporte */
+/** RF-024 Consultar morosidad / RF-025 Reporte / RF-042 Filtro pendiente-vencida / Alertar morosidad */
 function Morosidad() {
-    const [filas, , error] = useDatos("/api/morosidad");
+    const [filtro, setFiltro] = useState("VENCIDA");
+    const [filas, recargar, error] = useDatos(`/api/morosidad?filtro=${filtro}`);
     const [busqueda, setBusqueda] = useState("");
+    const [res, setRes] = useState(null);
+
     if (!filas) return <Cargando error={error} />;
+
+    const alertar = async (c) => {
+        try {
+            const r = await API.post("/morosidad/alertar", c ? { id_cuota: c.id_cuota } : {});
+            setRes({ ok: true, titulo: "Alerta de morosidad", mensaje: r.mensaje });
+        } catch (e) {
+            setRes({ ok: false, mensaje: e.message });
+        }
+    };
 
     const filasFiltradas = (filas || []).filter((f) => {
         if (!busqueda.trim()) return true;
@@ -1314,6 +1580,9 @@ function Morosidad() {
 
     const total = filasFiltradas.reduce((s, f) => s + Number(f.saldo), 0);
     const unidades = new Set(filasFiltradas.map((f) => f.id_unidad)).size;
+    const totalMorosos = filasFiltradas.filter((f) => Number(f.dias_atraso || 0) > 30).length;
+    const totalDeudores = filasFiltradas.filter((f) => Number(f.dias_atraso || 0) > 0 && Number(f.dias_atraso || 0) <= 30).length;
+
     const exportar = () => exportarCSV("reporte_morosidad.csv", [
         { titulo: "Unidad", valor: (f) => f.unidad },
         { titulo: "Propietario", valor: (f) => f.propietario },
@@ -1321,16 +1590,19 @@ function Morosidad() {
         { titulo: "Periodo", valor: (f) => periodoTexto(f.periodo) },
         { titulo: "Vencimiento", valor: (f) => fechaTexto(f.fecha_vencimiento) },
         { titulo: "Dias de atraso", valor: (f) => f.dias_atraso },
+        { titulo: "Condicion", valor: (f) => Number(f.dias_atraso) > 30 ? "MOROSO (> 30 dias)" : Number(f.dias_atraso) > 0 ? "DEUDOR (<= 30 dias)" : "AL DIA" },
         { titulo: "Saldo (S/.)", valor: (f) => Number(f.saldo).toFixed(2) },
     ], filasFiltradas);
 
     return (
         <div className="card">
-            <h2>Reporte de morosidad</h2>
+            <h2>Reporte de morosidad y cobranza</h2>
+            <Resultado res={res} />
             <div className="kpis">
-                <div className="kpi"><span>Departamentos morosos</span><strong style={{ color: "#b91c1c" }}>{unidades}</strong></div>
-                <div className="kpi"><span>Cuotas vencidas</span><strong>{filasFiltradas.length}</strong></div>
-                <div className="kpi alerta-kpi"><span>Deuda vencida total</span><strong>{soles(total)}</strong></div>
+                <div className="kpi"><span>Departamentos con deuda</span><strong style={{ color: "#b91c1c" }}>{unidades}</strong></div>
+                <div className="kpi"><span>Morosos (&gt; 30 días)</span><strong style={{ color: "#b91c1c" }}>{totalMorosos}</strong></div>
+                <div className="kpi"><span>Deudores (&le; 30 días)</span><strong style={{ color: "#d97706" }}>{totalDeudores}</strong></div>
+                <div className="kpi alerta-kpi"><span>Deuda acumulada total</span><strong>{soles(total)}</strong></div>
             </div>
             <div className="barra no-print">
                 <Campo label="Buscar por nombre o dpto:">
@@ -1341,21 +1613,290 @@ function Morosidad() {
                         onChange={(e) => setBusqueda(e.target.value)}
                     />
                 </Campo>
+                <Campo label="Filtro de clasificación (RF-042):">
+                    <select value={filtro} onChange={(e) => setFiltro(e.target.value)}>
+                        <option value="VENCIDA">Todas las deudas vencidas</option>
+                        <option value="MOROSO">Solo Morosos (&gt; 30 días de demora)</option>
+                        <option value="DEUDOR">Solo Deudores (&le; 30 días de retraso)</option>
+                        <option value="PENDIENTE">Solo cuotas pendientes</option>
+                        <option value="TODAS">Todas las cuotas por cobrar</option>
+                    </select>
+                </Campo>
             </div>
             <div className="acciones no-print" style={{ marginBottom: 12 }}>
+                <button className="btn rojo" title="Emitir alerta formal de morosidad a todos los dptos morosos" onClick={() => alertar(null)}>Alertar a todos los morosos</button>
                 <button className="btn" onClick={exportar}>Exportar a Excel (CSV)</button>
                 <button className="btn gris" onClick={() => window.print()}>Imprimir reporte</button>
             </div>
             <div className="tabla-responsive">
                 <table>
-                    <thead><tr><th>Unidad</th><th>Propietario</th><th>Teléfono</th><th>Periodo</th><th>Vencimiento</th><th className="num">Días de atraso</th><th className="num">Saldo (S/.)</th></tr></thead>
+                    <thead>
+                        <tr>
+                            <th>Unidad</th><th>Propietario</th><th>Teléfono</th><th>Periodo</th>
+                            <th>Vencimiento</th><th className="num">Días atraso</th><th>Condición</th><th className="num">Saldo (S/.)</th><th>Acciones</th>
+                        </tr>
+                    </thead>
                     <tbody>
-                        {filasFiltradas.length === 0 && <FilaVacia cols={7} texto="No hay cuotas vencidas. ¡Todos al día!" />}
+                        {filasFiltradas.length === 0 && <FilaVacia cols={9} texto="No hay cuotas con el filtro seleccionado. ¡Al día!" />}
                         {filasFiltradas.map((f) => (
                             <tr key={f.id_cuota}>
                                 <td>{f.unidad}</td><td>{f.propietario || "-"}</td><td>{f.telefono || "-"}</td>
                                 <td>{periodoTexto(f.periodo)}</td><td>{fechaTexto(f.fecha_vencimiento)}</td>
-                                <td className="num">{f.dias_atraso}</td><td className="num">{Number(f.saldo).toFixed(2)}</td>
+                                <td className="num">{f.dias_atraso}</td>
+                                <td>
+                                    {Number(f.dias_atraso) > 30 ? (
+                                        <span className="badge b-rojo" title="Más de 30 días de demora en el pago">Moroso (&gt; 30d)</span>
+                                    ) : Number(f.dias_atraso) > 0 ? (
+                                        <span className="badge b-amarillo" title="Menos de 30 días de retraso">Deudor (&le; 30d)</span>
+                                    ) : (
+                                        <span className="badge b-verde">Al día</span>
+                                    )}
+                                </td>
+                                <td className="num">{Number(f.saldo).toFixed(2)}</td>
+                                <td className="acciones">
+                                    <button className="btn chico rojo" title="Enviar alerta formal de morosidad" onClick={() => alertar(f)}>Alertar</button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+/** RF-039 / RF-040 Rendición de cuentas e historial para la asamblea (RF-036 Exportar) */
+function RendicionCuentas() {
+    const [periodos] = useDatos("/api/cuotas/periodos");
+    const [periodo, setPeriodo] = useState("");
+    const [datos, recargar, error] = useDatos(`/api/finanzas/rendicion?periodo=${periodo}`);
+
+    if (!datos) return <Cargando error={error} />;
+
+    const exportar = () => {
+        if (!datos.gastos_concepto) return;
+        exportarCSV(`rendicion_cuentas_${datos.periodo}.csv`, [
+            { titulo: "Concepto", valor: (g) => g.nombre_concepto },
+            { titulo: "Tipo", valor: (g) => g.tipo_concepto },
+            { titulo: "Gasto Presupuestado (S/.)", valor: (g) => Number(g.total_presupuestado).toFixed(2) },
+            { titulo: "Gasto Referencial (S/.)", valor: (g) => Number(g.gasto_referencial).toFixed(2) },
+        ], datos.gastos_concepto);
+    };
+
+    return (
+        <div className="card">
+            <h2>Rendición de cuentas e informe financiero</h2>
+            <div className="barra no-print">
+                <Campo label="Periodo a consultar:">
+                    <select value={datos.periodo || ""} onChange={(e) => setPeriodo(e.target.value)}>
+                        {(periodos || datos.periodos_disponibles || []).map((p) => (
+                            <option key={p} value={p}>{periodoTexto(p)}</option>
+                        ))}
+                    </select>
+                </Campo>
+                <div className="acciones" style={{ marginTop: 22 }}>
+                    <button className="btn" onClick={exportar}>Exportar a Excel (CSV)</button>
+                    <button className="btn gris" onClick={() => window.print()}>Imprimir informe</button>
+                </div>
+            </div>
+
+            <div className="kpis">
+                <div className="kpi">
+                    <span>Total Recaudado</span>
+                    <strong style={{ color: "#16a34a" }}>{soles(datos.total_ingresos)}</strong>
+                </div>
+                <div className="kpi">
+                    <span>Total Gastos Presupuestados</span>
+                    <strong style={{ color: "#dc2626" }}>{soles(datos.total_gastos)}</strong>
+                </div>
+                <div className="kpi">
+                    <span>Balance del Periodo</span>
+                    <strong style={{ color: Number(datos.balance_periodo) >= 0 ? "#16a34a" : "#dc2626" }}>
+                        {soles(datos.balance_periodo)}
+                    </strong>
+                </div>
+            </div>
+
+            <h3 style={{ marginTop: 20, color: "#1e3a8a" }}>Desglose de gastos por concepto — {periodoTexto(datos.periodo)}</h3>
+            <div className="tabla-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Concepto</th>
+                            <th>Tipo de Gasto</th>
+                            <th className="num">Gasto Referencial</th>
+                            <th className="num">Total Ejecutado / Presupuestado (S/.)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {(datos.gastos_concepto || []).map((g) => (
+                            <tr key={g.id_concepto}>
+                                <td><b>{g.nombre_concepto}</b></td>
+                                <td>{g.tipo_concepto}</td>
+                                <td className="num">{soles(g.gasto_referencial)}</td>
+                                <td className="num">{soles(g.total_presupuestado)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
+            <h3 style={{ marginTop: 28, color: "#1e3a8a" }}>Historial de rendición de cuentas ante la asamblea (RF-040)</h3>
+            <div className="tabla-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Periodo</th>
+                            <th>Unidades</th>
+                            <th className="num">Recaudación (S/.)</th>
+                            <th className="num">Gastos (S/.)</th>
+                            <th className="num">Superávit / Déficit</th>
+                            <th>Estado ante Asamblea</th>
+                            <th>Responsable</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {(datos.historial_rendiciones || []).map((h) => {
+                            const dif = Number(h.ingresos_recaudados) - Number(h.gastos_periodo);
+                            return (
+                                <tr key={h.periodo}>
+                                    <td><b>{periodoTexto(h.periodo)}</b></td>
+                                    <td>{h.unidades} dptos.</td>
+                                    <td className="num">{soles(h.ingresos_recaudados)}</td>
+                                    <td className="num">{soles(h.gastos_periodo)}</td>
+                                    <td className="num" style={{ color: dif >= 0 ? "#16a34a" : "#dc2626", fontWeight: "bold" }}>
+                                        {soles(dif)}
+                                    </td>
+                                    <td><span className="badge b-verde">{h.estado_rendicion}</span></td>
+                                    <td>{h.responsable}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+/** RF-031 / RF-043 / RF-047 Movimientos financieros con auditoría y reporte con filtro de ingreso (RF-032 / RF-033 / RF-036) */
+function Movimientos() {
+    const [periodos] = useDatos("/api/cuotas/periodos");
+    const [periodo, setPeriodo] = useState("");
+    const [tipoIngreso, setTipoIngreso] = useState("");
+    const [busqueda, setBusqueda] = useState("");
+    const [movimientos, recargar, error] = useDatos(`/api/finanzas/movimientos?periodo=${periodo}&tipoIngreso=${tipoIngreso}`);
+
+    if (!movimientos) return <Cargando error={error} />;
+
+    const filtrados = (movimientos || []).filter((m) => {
+        if (!busqueda.trim()) return true;
+        const b = busqueda.toLowerCase();
+        return (m.concepto && m.concepto.toLowerCase().includes(b)) ||
+               (m.unidad && m.unidad.toLowerCase().includes(b)) ||
+               (m.registrado_por && m.registrado_por.toLowerCase().includes(b)) ||
+               (m.referencia && m.referencia.toLowerCase().includes(b));
+    });
+
+    const total = filtrados.reduce((acc, m) => acc + Number(m.monto || 0), 0);
+    const totalYape = filtrados.filter((m) => m.metodo_pago === "YAPE").reduce((acc, m) => acc + Number(m.monto || 0), 0);
+    const totalEfectivo = filtrados.filter((m) => m.metodo_pago === "EFECTIVO").reduce((acc, m) => acc + Number(m.monto || 0), 0);
+
+    const exportar = () => {
+        exportarCSV("movimientos_financieros.csv", [
+            { titulo: "Fecha", valor: (m) => m.fecha },
+            { titulo: "Tipo", valor: (m) => m.tipo_movimiento },
+            { titulo: "Concepto", valor: (m) => m.concepto },
+            { titulo: "Unidad", valor: (m) => m.unidad },
+            { titulo: "Medio de Pago", valor: (m) => m.metodo_pago || "Efectivo" },
+            { titulo: "Nro Referencia", valor: (m) => m.referencia || "-" },
+            { titulo: "Monto (S/.)", valor: (m) => Number(m.monto).toFixed(2) },
+            { titulo: "Registrado por (Auditoría)", valor: (m) => m.registrado_por },
+            { titulo: "Fecha/Hora Auditoría", valor: (m) => m.fecha_auditoria },
+        ], filtrados);
+    };
+
+    return (
+        <div className="card">
+            <h2>Movimientos financieros y auditoría de transacciones</h2>
+            <div className="kpis">
+                <div className="kpi">
+                    <span>Total Recaudado</span>
+                    <strong style={{ color: "#16a34a" }}>{soles(total)}</strong>
+                </div>
+                <div className="kpi">
+                    <span>Recaudación Yape</span>
+                    <strong style={{ color: "#7c3aed" }}>{soles(totalYape)}</strong>
+                </div>
+                <div className="kpi">
+                    <span>Recaudación Efectivo</span>
+                    <strong style={{ color: "#0ea5e9" }}>{soles(totalEfectivo)}</strong>
+                </div>
+                <div className="kpi">
+                    <span>N° Transacciones</span>
+                    <strong>{filtrados.length}</strong>
+                </div>
+            </div>
+
+            <div className="barra no-print">
+                <Campo label="Buscar por concepto o dpto:">
+                    <input
+                        type="text"
+                        placeholder="Buscar por dpto, usuario, voucher..."
+                        value={busqueda}
+                        onChange={(e) => setBusqueda(e.target.value)}
+                    />
+                </Campo>
+                <Campo label="Periodo:">
+                    <select value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
+                        <option value="">Todos los periodos</option>
+                        {(periodos || []).map((p) => (
+                            <option key={p} value={p}>{periodoTexto(p)}</option>
+                        ))}
+                    </select>
+                </Campo>
+                <Campo label="Tipo de ingreso (Medio):">
+                    <select value={tipoIngreso} onChange={(e) => setTipoIngreso(e.target.value)}>
+                        <option value="">Todos (Yape y Efectivo)</option>
+                        <option value="YAPE">Yape</option>
+                        <option value="EFECTIVO">Efectivo</option>
+                    </select>
+                </Campo>
+            </div>
+
+            <div className="acciones no-print" style={{ marginBottom: 12 }}>
+                <button className="btn" onClick={exportar}>Exportar a Excel (CSV)</button>
+                <button className="btn gris" onClick={() => window.print()}>Imprimir reporte</button>
+            </div>
+
+            <div className="tabla-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Tipo</th>
+                            <th>Concepto</th>
+                            <th>Unidad</th>
+                            <th>Medio de Pago</th>
+                            <th>N° Operación</th>
+                            <th className="num">Monto (S/.)</th>
+                            <th>Registrado por (Auditoría)</th>
+                            <th>Fecha Auditoría</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {filtrados.length === 0 && <FilaVacia cols={9} texto="No se registraron movimientos con los filtros seleccionados." />}
+                        {filtrados.map((m) => (
+                            <tr key={m.id_movimiento}>
+                                <td>{fechaTexto(m.fecha)}</td>
+                                <td><span className="badge b-verde">{m.tipo_movimiento}</span></td>
+                                <td>{m.concepto}</td>
+                                <td>{m.unidad}</td>
+                                <td><b>{m.metodo_pago || "EFECTIVO"}</b></td>
+                                <td>{m.referencia || "-"}</td>
+                                <td className="num" style={{ fontWeight: "bold" }}>{soles(m.monto)}</td>
+                                <td>{m.registrado_por}</td>
+                                <td><small style={{ color: "#64748b" }}>{m.fecha_auditoria}</small></td>
                             </tr>
                         ))}
                     </tbody>
@@ -1408,6 +1949,29 @@ function Perfil() {
 //  APP PRINCIPAL: Login (RF-003), Cerrar sesion (RF-004),
 //  Recuperar contrasena (RF-005) y navegacion por rol
 // =============================================================
+
+const INQUILINOS_DEMO = [
+    { dpto: "Dpto. 101", piso: "Piso 1", nombre: "Luis Torres Vega", correo: "luis.torres@email.com" },
+    { dpto: "Dpto. 102", piso: "Piso 1", nombre: "María Flores Rojas", correo: "maria.flores@email.com" },
+    { dpto: "Dpto. 103", piso: "Piso 1", nombre: "Jorge Ramírez Paz", correo: "jorge.ramirez@email.com" },
+    { dpto: "Dpto. 104", piso: "Piso 1", nombre: "Ana Castillo Soto", correo: "ana.castillo@email.com" },
+    { dpto: "Dpto. 201", piso: "Piso 2", nombre: "Pedro Salazar León", correo: "pedro.salazar@email.com" },
+    { dpto: "Dpto. 202", piso: "Piso 2", nombre: "Lucía Herrera Díaz", correo: "lucia.herrera@email.com" },
+    { dpto: "Dpto. 203", piso: "Piso 2", nombre: "Miguel Chávez Ríos (Moroso)", correo: "miguel.chavez@email.com" },
+    { dpto: "Dpto. 204", piso: "Piso 2", nombre: "Carmen Vargas Medina", correo: "carmen.vargas@email.com" },
+    { dpto: "Dpto. 301", piso: "Piso 3", nombre: "Ricardo Mejía Campos", correo: "ricardo.mejia@email.com" },
+    { dpto: "Dpto. 302", piso: "Piso 3", nombre: "Carlos Mendoza Ruiz", correo: "carlos.mendoza@email.com" },
+    { dpto: "Dpto. 303", piso: "Piso 3", nombre: "Patricia Núñez Ortiz", correo: "patricia.nunez@email.com" },
+    { dpto: "Dpto. 304", piso: "Piso 3", nombre: "Fernando Rojas Aguilar", correo: "fernando.rojas@email.com" },
+    { dpto: "Dpto. 401", piso: "Piso 4", nombre: "Elena Morales Pineda", correo: "elena.morales@email.com" },
+    { dpto: "Dpto. 402", piso: "Piso 4", nombre: "Roberto Silva Paredes", correo: "roberto.silva@email.com" },
+    { dpto: "Dpto. 403", piso: "Piso 4", nombre: "Gabriela Castro Luna", correo: "gabriela.castro@email.com" },
+    { dpto: "Dpto. 404", piso: "Piso 4", nombre: "Hugo Benites Espinoza", correo: "hugo.benites@email.com" },
+    { dpto: "Dpto. 501", piso: "Piso 5", nombre: "María Lozano", correo: "maria.lozano@email.com" },
+    { dpto: "Dpto. 502", piso: "Piso 5", nombre: "Raúl Paredes Gómez", correo: "raul.paredes@email.com" },
+    { dpto: "Dpto. 503", piso: "Piso 5", nombre: "Silvia Aguilar Ramos", correo: "silvia.aguilar@email.com" },
+    { dpto: "Dpto. 504", piso: "Piso 5", nombre: "Oscar Delgado Vera", correo: "oscar.delgado@email.com" },
+];
 
 function Login({ alEntrar }) {
     const [correo, setCorreo] = useState("");
@@ -1478,21 +2042,40 @@ function Login({ alEntrar }) {
                         <button type="button" className="btn blanco bloque" style={{ marginTop: 8 }}
                             onClick={() => { setRecuperar(true); setRes(null); }}>¿Olvidó su contraseña?</button>
 
-                        <div className="demo">
+                        <div className="demo" style={{ marginTop: 16 }}>
                             <b>Cuentas de prueba predefinidas (clic para autocompletar):</b>
-                            <div className="acciones" style={{ marginTop: 6 }}>
-                                <button type="button" className="btn chico" onClick={() => rapido("admin@cruceta.com", "admin123")}>
-                                    Administrador (La Directiva)
+                            <div style={{ marginTop: 8 }}>
+                                <div style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: 4, fontWeight: "600" }}>
+                                    Administración del Edificio:
+                                </div>
+                                <button
+                                    type="button"
+                                    className="btn chico"
+                                    style={{ width: "100%", justifyContent: "center", padding: "8px 12px" }}
+                                    onClick={() => rapido("admin@cruceta.com", "admin123")}
+                                >
+                                    🛡️ Administrador (La Directiva) — admin@cruceta.com
                                 </button>
-                                <button type="button" className="btn chico verde" onClick={() => rapido("maria.lozano@email.com", "123456")}>
-                                    María Lozano (Piso 5 - Dpto. 501)
-                                </button>
-                                <button type="button" className="btn chico verde" onClick={() => rapido("carlos.mendoza@email.com", "123456")}>
-                                    Carlos Mendoza (Piso 3 - Dpto. 302)
-                                </button>
-                                <button type="button" className="btn chico gris" onClick={() => rapido("miguel.chavez@email.com", "123456")}>
-                                    Miguel Chávez (Piso 2 - Dpto. 203 Moroso)
-                                </button>
+                            </div>
+
+                            <div style={{ marginTop: 12 }}>
+                                <div style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: 4, fontWeight: "600" }}>
+                                    Inquilinos / Propietarios (20 departamentos):
+                                </div>
+                                <select
+                                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#f8fafc", fontSize: "0.88rem" }}
+                                    defaultValue=""
+                                    onChange={(e) => {
+                                        if (e.target.value) rapido(e.target.value, "123456");
+                                    }}
+                                >
+                                    <option value="" disabled>-- Seleccione un departamento / inquilino (101 a 504) --</option>
+                                    {INQUILINOS_DEMO.map((inq) => (
+                                        <option key={inq.correo} value={inq.correo}>
+                                            {inq.dpto} ({inq.piso}) — {inq.nombre}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
                     </form>
@@ -1532,15 +2115,16 @@ function App() {
     };
 
     const menu = esAdmin ? [
-        ["dashboard", "Dashboard"],
-        ["generar", "Generar cuota mensual"],
+        ["dashboard", "Consultar dashboard administrativo"],
+        ["rendicion", "Rendición de cuentas e historial"],
+        ["movimientos", "Movimientos financieros y auditoría"],
+        ["morosidad", "Reporte de morosidad"],
         ["cuotas", "Cuotas emitidas"],
-        ["pagos", "Pagos y validación"],
+        ["pagos", "Pagos y comprobantes"],
         ["registrar-pago", "Registrar pago"],
         ["constancias", "Constancias de pago"],
         ["estado", "Estado de cuenta"],
-        ["morosidad", "Morosidad"],
-        ["conceptos", "Conceptos de cobro"],
+        ["conceptos", "Conceptos de cobro y gastos"],
         ["unidades", "Departamentos (Unidades)"],
         ["usuarios", "Propietarios / Usuarios"],
         ["perfil", "Mi perfil"],
@@ -1581,14 +2165,15 @@ function App() {
                 </div>
                 <div className="main">
                     {vista === "dashboard" && <Dashboard ir={ir} />}
-                    {vista === "generar" && <GenerarCuota />}
+                    {vista === "rendicion" && <RendicionCuentas />}
+                    {vista === "movimientos" && <Movimientos />}
+                    {vista === "conceptos" && <Conceptos />}
                     {vista === "cuotas" && <ListaCuotas usuario={usuario} ir={ir} />}
                     {vista === "estado" && <EstadoCuenta usuario={usuario} ir={ir} />}
                     {vista === "registrar-pago" && <RegistrarPago usuario={usuario} params={params} ir={ir} />}
                     {vista === "pagos" && <ListaPagos usuario={usuario} />}
                     {vista === "constancias" && <Constancias usuario={usuario} />}
                     {vista === "morosidad" && <Morosidad />}
-                    {vista === "conceptos" && <Conceptos />}
                     {vista === "unidades" && <Unidades />}
                     {vista === "usuarios" && <Usuarios />}
                     {vista === "perfil" && <Perfil />}

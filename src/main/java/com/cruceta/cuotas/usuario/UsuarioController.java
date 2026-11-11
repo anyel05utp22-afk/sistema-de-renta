@@ -8,6 +8,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -42,10 +44,30 @@ public class UsuarioController {
         return jdbc.queryForList("SELECT id_rol, nombre_rol FROM rol ORDER BY id_rol");
     }
 
+    /** Consultar usuarios con filtros por busqueda, rol y estado */
     @GetMapping("/usuarios")
-    public List<Map<String, Object>> listar(@RequestHeader(value = "Authorization", required = false) String a) {
-        auth.requerirAdmin(a);
-        return jdbc.queryForList(SELECT_USUARIO + " ORDER BY u.id_rol, un.bloque, un.numero_unidad");
+    public List<Map<String, Object>> listar(@RequestHeader(value = "Authorization", required = false) String a,
+                                            @RequestParam(required = false) String busqueda,
+                                            @RequestParam(required = false) Integer idRol,
+                                            @RequestParam(required = false) String estado) {
+        auth.requerirAdminOJunta(a);
+        StringBuilder sql = new StringBuilder(SELECT_USUARIO + " WHERE 1=1");
+        List<Object> params = new ArrayList<>();
+        if (busqueda != null && !busqueda.isBlank()) {
+            String b = "%" + busqueda.trim().toLowerCase() + "%";
+            sql.append(" AND (LOWER(u.nombre) LIKE ? OR LOWER(u.apellido) LIKE ? OR u.dni LIKE ? OR LOWER(un.numero_unidad) LIKE ?)");
+            params.add(b); params.add(b); params.add(b); params.add(b);
+        }
+        if (idRol != null) {
+            sql.append(" AND u.id_rol = ?");
+            params.add(idRol);
+        }
+        if (estado != null && !estado.isBlank()) {
+            sql.append(" AND u.estado_cuenta = ?");
+            params.add(estado);
+        }
+        sql.append(" ORDER BY u.id_rol, un.bloque, un.numero_unidad");
+        return jdbc.queryForList(sql.toString(), params.toArray());
     }
 
     /** RF-001 Registrar propietario o residente */
@@ -122,6 +144,26 @@ public class UsuarioController {
         }
         jdbc.update("UPDATE usuario SET estado_cuenta = ? WHERE id_usuario = ?", estado, id);
         return Map.of("mensaje", "INACTIVO".equals(estado) ? "Usuario desactivado." : "Usuario reactivado.");
+    }
+
+    /** Reactivar usuario inactivo */
+    @PostMapping("/usuarios/{id}/reactivar")
+    public Map<String, Object> reactivar(@RequestHeader(value = "Authorization", required = false) String a,
+                                         @PathVariable int id) {
+        auth.requerirAdmin(a);
+        int n = jdbc.update("UPDATE usuario SET estado_cuenta = 'ACTIVO' WHERE id_usuario = ?", id);
+        if (n == 0) throw ApiException.noEncontrado("Usuario no encontrado.");
+        return Map.of("mensaje", "Usuario reactivado correctamente.");
+    }
+
+    /** Desactivar usuario */
+    @PostMapping("/usuarios/{id}/desactivar")
+    public Map<String, Object> desactivar(@RequestHeader(value = "Authorization", required = false) String a,
+                                          @PathVariable int id,
+                                          @RequestBody(required = false) Map<String, Object> b) {
+        Map<String, Object> body = b == null ? new HashMap<>() : new HashMap<>(b);
+        body.put("estado", "INACTIVO");
+        return cambiarEstado(a, id, body);
     }
 
     @GetMapping("/perfil")
