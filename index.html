@@ -21,9 +21,10 @@
 //  Funciona tanto en http://localhost:8082 como abriendo index.html
 //  directamente o con Live Server.
 // =============================================================
-const BASE_API = (window.location.port === "8082" && window.location.protocol.startsWith("http"))
-    ? ""
-    : "http://localhost:8082";
+const esLocalExterno = (window.location.protocol === "file:")
+    || ((window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+        && window.location.port !== "8082");
+const BASE_API = esLocalExterno ? "http://localhost:8082" : "";
 
 const API = {
     token() {
