@@ -18,23 +18,28 @@ CREATE TABLE IF NOT EXISTS unidad (
 );
 
 -- Cada departamento (unidad) tiene su propio duenio (usuario con rol PROPIETARIO).
--- Se agrega la columna "contrasena" (hash SHA-256) para poder iniciar sesion (RF-003).
+-- La columna "contrasena" almacena el hash BCrypt con sal aleatoria unica (RF-003).
 CREATE TABLE IF NOT EXISTS usuario (
-    id_usuario        INT AUTO_INCREMENT PRIMARY KEY,
-    dni               VARCHAR(15)  NOT NULL UNIQUE,
-    nombre            VARCHAR(80)  NOT NULL,
-    apellido          VARCHAR(80)  NOT NULL,
-    fecha_nacimiento  DATE NULL,
-    telefono          VARCHAR(20)  NULL,
-    correo            VARCHAR(120) NOT NULL UNIQUE,
-    direccion         VARCHAR(150) NULL,
-    contrasena        VARCHAR(64)  NOT NULL,
-    id_rol            INT NOT NULL,
-    id_unidad         INT NULL,
-    estado_cuenta     VARCHAR(20)  NOT NULL DEFAULT 'ACTIVO',
+    id_usuario               INT AUTO_INCREMENT PRIMARY KEY,
+    dni                      VARCHAR(15)  NOT NULL UNIQUE,
+    nombre                   VARCHAR(80)  NOT NULL,
+    apellido                 VARCHAR(80)  NOT NULL,
+    fecha_nacimiento         DATE NULL,
+    telefono                 VARCHAR(20)  NULL,
+    correo                   VARCHAR(120) NOT NULL UNIQUE,
+    direccion                VARCHAR(150) NULL,
+    contrasena               VARCHAR(100) NOT NULL,
+    id_rol                   INT NOT NULL,
+    id_unidad                INT NULL,
+    estado_cuenta            VARCHAR(20)  NOT NULL DEFAULT 'ACTIVO',
+    intentos_fallidos        INT NOT NULL DEFAULT 0,
+    bloqueado_hasta          DATETIME NULL,
+    debe_cambiar_contrasena  TINYINT(1) NOT NULL DEFAULT 0,
     CONSTRAINT fk_usuario_rol    FOREIGN KEY (id_rol)    REFERENCES rol(id_rol),
     CONSTRAINT fk_usuario_unidad FOREIGN KEY (id_unidad) REFERENCES unidad(id_unidad)
 );
+
+ALTER TABLE usuario MODIFY COLUMN contrasena VARCHAR(100) NOT NULL;
 
 -- Conceptos de gasto del edificio (vigilancia, limpieza, agua, luz...)
 -- monto_base = gasto mensual referencial; cada mes el administrador

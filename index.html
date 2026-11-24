@@ -66,7 +66,40 @@ const API = {
     put: (url, cuerpo) => API.request("PUT", url, cuerpo),
     form: (url, formData) => API.request("POST", url, formData, true),
 
-    urlComprobante: (idComprobante) => `${BASE_API}/api/comprobantes/${idComprobante}/archivo?token=${API.token()}`,
+    async abrirComprobante(idComprobante) {
+        const win = window.open("", "_blank");
+        const opciones = { method: "GET", headers: {} };
+        if (API.token()) opciones.headers["Authorization"] = "Bearer " + API.token();
+        let res;
+        try {
+            res = await fetch(`${BASE_API}/api/comprobantes/${idComprobante}/archivo`, opciones);
+        } catch (err) {
+            if (win) win.close();
+            throw new Error("No se pudo conectar al servidor para obtener el comprobante.");
+        }
+        if (!res.ok) {
+            if (win) win.close();
+            let datos = null;
+            try { datos = await res.json(); } catch (e) { /* respuesta sin cuerpo */ }
+            if (res.status === 401) {
+                sessionStorage.clear();
+                window.dispatchEvent(new Event("sesion-expirada"));
+            }
+            throw new Error((datos && (datos.error || datos.message)) || "No se pudo abrir el comprobante.");
+        }
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        if (win) {
+            win.location.href = blobUrl;
+        } else {
+            const a = document.createElement("a");
+            a.href = blobUrl;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            a.click();
+        }
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    },
 };
 
 
@@ -736,6 +769,12 @@ function ListaPagos({ usuario }) {
         } catch (e) { setRes({ ok: false, mensaje: e.message }); }
     };
 
+    const verComprobante = async (idComprobante) => {
+        try {
+            await API.abrirComprobante(idComprobante);
+        } catch (e) { setRes({ ok: false, mensaje: e.message }); }
+    };
+
     const pagosFiltrados = (pagos || []).filter((p) => {
         if (!busqueda.trim()) return true;
         const b = busqueda.toLowerCase();
@@ -804,7 +843,7 @@ function ListaPagos({ usuario }) {
                                         {p.observacion && <div className="ayuda">Motivo: {p.observacion}</div>}
                                     </td>
                                     <td className="acciones">
-                                        {p.id_comprobante && <a className="btn chico blanco" href={API.urlComprobante(p.id_comprobante)} target="_blank">Comprobante</a>}
+                                        {p.id_comprobante && <button type="button" className="btn chico blanco" onClick={() => verComprobante(p.id_comprobante)}>Comprobante</button>}
                                         {p.numero_recibo && <span className="badge b-azul">{p.numero_recibo}</span>}
                                         {esAdmin && p.estado_pago === "EN_REVISION" && <>
                                             <button className="btn chico verde" onClick={() => validar(p)}>Validar</button>
@@ -1057,7 +1096,7 @@ function Usuarios() {
                         <Campo label="Correo Electrónico:"><input value={f.correo} onChange={c("correo")} /></Campo>
                         <Campo label="Teléfono / Celular:"><input value={f.telefono} maxLength="9" onChange={c("telefono")} /></Campo>
                         <Campo label="Dirección:"><input value={f.direccion} onChange={c("direccion")} /></Campo>
-                        <Campo label="Contraseña inicial:" ayuda="Si se deja vacía, la contraseña será el DNI."><input type="password" value={f.contrasena} onChange={c("contrasena")} /></Campo>
+                        <Campo label="Contraseña inicial (opcional):" ayuda="Mínimo 8 caracteres. Si se deja vacía, se generará una contraseña temporal aleatoria que el usuario deberá cambiar en su primer ingreso."><input type="password" minLength="8" value={f.contrasena} onChange={c("contrasena")} /></Campo>
                     </div>
                     <button className="btn verde bloque">Registrar Usuario</button>
                 </form>
@@ -1395,7 +1434,7 @@ function Perfil() {
                     <Campo label="Teléfono / Celular:"><input value={f.telefono || ""} maxLength="9" onChange={c("telefono")} /></Campo>
                     <Campo label="Dirección:" className="full"><input value={f.direccion || ""} onChange={c("direccion")} /></Campo>
                     <Campo label="Contraseña actual:" ayuda="Solo si desea cambiar su contraseña."><input type="password" value={f.contrasena_actual} onChange={c("contrasena_actual")} /></Campo>
-                    <Campo label="Nueva contraseña:"><input type="password" value={f.contrasena_nueva} onChange={c("contrasena_nueva")} /></Campo>
+                    <Campo label="Nueva contraseña:" ayuda="Mínimo 8 caracteres."><input type="password" minLength="8" value={f.contrasena_nueva} onChange={c("contrasena_nueva")} /></Campo>
                 </div>
                 <button className="btn verde bloque">Guardar cambios</button>
             </form>
@@ -1442,8 +1481,6 @@ function Login({ alEntrar }) {
         });
     };
 
-    const rapido = (c, p) => { setCorreo(c); setContrasena(p); setRes(null); };
-
     return (
         <div>
             <div className="header">
@@ -1467,7 +1504,7 @@ function Login({ alEntrar }) {
                         <h2>Iniciar Sesión (RF-003)</h2>
                         <Resultado res={res} />
                         <Campo label="Correo Electrónico / Usuario:">
-                            <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="admin@cruceta.com" />
+                            <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="correo@ejemplo.com" />
                         </Campo>
                         <div style={{ marginTop: 12 }}>
                             <Campo label="Contraseña:">
@@ -1477,26 +1514,78 @@ function Login({ alEntrar }) {
                         <button className="btn bloque">Ingresar al Sistema</button>
                         <button type="button" className="btn blanco bloque" style={{ marginTop: 8 }}
                             onClick={() => { setRecuperar(true); setRes(null); }}>¿Olvidó su contraseña?</button>
-
-                        <div className="demo">
-                            <b>Cuentas de prueba predefinidas (clic para autocompletar):</b>
-                            <div className="acciones" style={{ marginTop: 6 }}>
-                                <button type="button" className="btn chico" onClick={() => rapido("admin@cruceta.com", "admin123")}>
-                                    Administrador (La Directiva)
-                                </button>
-                                <button type="button" className="btn chico verde" onClick={() => rapido("maria.lozano@email.com", "123456")}>
-                                    María Lozano (Piso 5 - Dpto. 501)
-                                </button>
-                                <button type="button" className="btn chico verde" onClick={() => rapido("carlos.mendoza@email.com", "123456")}>
-                                    Carlos Mendoza (Piso 3 - Dpto. 302)
-                                </button>
-                                <button type="button" className="btn chico gris" onClick={() => rapido("miguel.chavez@email.com", "123456")}>
-                                    Miguel Chávez (Piso 2 - Dpto. 203 Moroso)
-                                </button>
-                            </div>
-                        </div>
                     </form>
                 )}
+            </div>
+        </div>
+    );
+}
+
+function CambiarContrasenaObligatorio({ usuario, alActualizar, alSalir }) {
+    const [actual, setActual] = useState("");
+    const [nueva, setNueva] = useState("");
+    const [confirmar, setConfirmar] = useState("");
+    const [res, setRes] = useState(null);
+    const [enviando, setEnviando] = useState(false);
+
+    const guardar = async (e) => {
+        e.preventDefault();
+        setRes(null);
+        if (nueva.length < 8) {
+            setRes({ ok: false, mensaje: "La nueva contraseña debe tener al menos 8 caracteres." });
+            return;
+        }
+        if (nueva !== confirmar) {
+            setRes({ ok: false, mensaje: "La confirmación de contraseña no coincide." });
+            return;
+        }
+        setEnviando(true);
+        try {
+            const r = await API.post("/api/auth/cambiar-contrasena", {
+                contrasena_actual: actual,
+                contrasena_nueva: nueva,
+            });
+            sessionStorage.setItem("usuario", JSON.stringify(r.usuario));
+            alActualizar(r.usuario);
+        } catch (er) {
+            setRes({ ok: false, mensaje: er.message });
+        }
+        setEnviando(false);
+    };
+
+    return (
+        <div>
+            <div className="header">
+                <h1>SISTEMA WEB "EDIFICIO LA CRUCETA"</h1>
+                <div className="sub">Cambio obligatorio de contraseña temporal</div>
+            </div>
+            <div className="card login">
+                <h2>Actualice su contraseña</h2>
+                <Alerta tipo="warn">
+                    Hola <b>{usuario.nombreCompleto}</b>. Por seguridad, debe reemplazar su contraseña temporal antes de usar el sistema.
+                </Alerta>
+                <Resultado res={res} />
+                <form onSubmit={guardar}>
+                    <Campo label="Contraseña temporal actual:">
+                        <input type="password" value={actual} onChange={(e) => setActual(e.target.value)} required />
+                    </Campo>
+                    <div style={{ marginTop: 12 }}>
+                        <Campo label="Nueva contraseña:" ayuda="Mínimo 8 caracteres.">
+                            <input type="password" minLength="8" value={nueva} onChange={(e) => setNueva(e.target.value)} required />
+                        </Campo>
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                        <Campo label="Confirmar nueva contraseña:">
+                            <input type="password" minLength="8" value={confirmar} onChange={(e) => setConfirmar(e.target.value)} required />
+                        </Campo>
+                    </div>
+                    <button className="btn verde bloque" disabled={enviando}>
+                        {enviando ? "Guardando..." : "Guardar nueva contraseña"}
+                    </button>
+                    <button type="button" className="btn gris bloque" style={{ marginTop: 8 }} onClick={alSalir}>
+                        Cerrar sesión
+                    </button>
+                </form>
             </div>
         </div>
     );
@@ -1522,14 +1611,25 @@ function App() {
         setVista(u.rol === "ADMINISTRADOR" ? "dashboard" : "estado");
     }} />;
 
-    const esAdmin = usuario.rol === "ADMINISTRADOR";
-    const ir = (v, p) => { setParams(p || null); setVista(v); setMenuAbierto(false); };
-
     const salir = async () => {
         try { await API.post("/api/auth/logout"); } catch (e) { /* ignorar */ }
         sessionStorage.clear();
         setUsuario(null);
     };
+
+    if (usuario.debeCambiarContrasena) {
+        return <CambiarContrasenaObligatorio
+            usuario={usuario}
+            alActualizar={(u) => {
+                setUsuario(u);
+                setVista(u.rol === "ADMINISTRADOR" ? "dashboard" : "estado");
+            }}
+            alSalir={salir}
+        />;
+    }
+
+    const esAdmin = usuario.rol === "ADMINISTRADOR";
+    const ir = (v, p) => { setParams(p || null); setVista(v); setMenuAbierto(false); };
 
     const menu = esAdmin ? [
         ["dashboard", "Dashboard"],

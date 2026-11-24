@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -69,6 +70,18 @@ public class UsuarioController {
         if (idRol != 1 && idUnidad == null)
             throw ApiException.validacion("Seleccione el departamento (unidad) del propietario o residente.");
 
+        boolean esTemporal = contrasena.isEmpty();
+        String contrasenaInicial;
+        if (esTemporal) {
+            contrasenaInicial = AuthService.generarContrasenaTemporal();
+        } else {
+            if (contrasena.length() < AuthService.MIN_CONTRASENA)
+                throw ApiException.validacion("La contrasena debe tener al menos " + AuthService.MIN_CONTRASENA + " caracteres.");
+            if (contrasena.equals(dni))
+                throw ApiException.validacion("La contrasena no puede ser igual al DNI.");
+            contrasenaInicial = contrasena;
+        }
+
         // Flujo alternativo: "si el identificador ya existe, el sistema impide duplicarlo"
         if (existe("SELECT COUNT(*) FROM usuario WHERE dni = ?", dni))
             throw ApiException.validacion("Ya existe un usuario registrado con el DNI " + dni + ".");
@@ -80,13 +93,20 @@ public class UsuarioController {
 
         jdbc.update("""
                 INSERT INTO usuario (dni, nombre, apellido, fecha_nacimiento, telefono, correo, direccion,
-                                     contrasena, id_rol, id_unidad, estado_cuenta)
-                VALUES (?,?,?,?,?,?,?,?,?,?, 'ACTIVO')""",
+                                     contrasena, id_rol, id_unidad, estado_cuenta, debe_cambiar_contrasena)
+                VALUES (?,?,?,?,?,?,?,?,?,?, 'ACTIVO', ?)""",
                 dni, nombre, apellido, fechaNac.isEmpty() ? null : fechaNac, telefono, correo, direccion,
-                AuthService.hash(contrasena.isEmpty() ? dni : contrasena), idRol, idRol == 1 ? null : idUnidad);
+                AuthService.hash(contrasenaInicial), idRol, idRol == 1 ? null : idUnidad, esTemporal ? 1 : 0);
 
-        return Map.of("mensaje", "Usuario registrado correctamente. Su contrasena inicial es "
-                + (contrasena.isEmpty() ? "su DNI." : "la indicada en el formulario."));
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (esTemporal) {
+            resp.put("contrasena_temporal", contrasenaInicial);
+            resp.put("mensaje", "Usuario registrado correctamente. Contrasena temporal generada: "
+                    + contrasenaInicial + " (debera cambiarla en su primer inicio de sesion).");
+        } else {
+            resp.put("mensaje", "Usuario registrado correctamente. Su contrasena inicial es la indicada en el formulario.");
+        }
+        return resp;
     }
 
     /** RF-006 Asignar roles de usuario */
@@ -121,6 +141,9 @@ public class UsuarioController {
                         "El usuario tiene " + pendientes + " cuota(s) pendiente(s) o vencida(s). Desea desactivarlo de todas formas?");
         }
         jdbc.update("UPDATE usuario SET estado_cuenta = ? WHERE id_usuario = ?", estado, id);
+        if ("INACTIVO".equals(estado)) {
+            auth.invalidarSesionesDeUsuario(id);
+        }
         return Map.of("mensaje", "INACTIVO".equals(estado) ? "Usuario desactivado." : "Usuario reactivado.");
     }
 
@@ -139,7 +162,7 @@ public class UsuarioController {
         String telefono = Datos.texto(b, "telefono");
         String direccion = Datos.texto(b, "direccion");
         validarFormato(null, correo, telefono);
-        if (existe("SELECT COUNT(*) FROM usuario WHERE correo = ? AND id_usuario <> " + s.idUsuario(), correo))
+        if (existe("SELECT COUNT(*) FROM usuario WHERE correo = ? AND id_usuario <> ?", correo, s.idUsuario()))
             throw ApiException.validacion("El correo ya esta siendo usado por otro usuario.");
 
         jdbc.update("UPDATE usuario SET correo = ?, telefono = ?, direccion = ? WHERE id_usuario = ?",
@@ -149,10 +172,13 @@ public class UsuarioController {
         if (!nueva.isEmpty()) {
             String actual = Datos.texto(b, "contrasena_actual");
             String guardada = jdbc.queryForObject("SELECT contrasena FROM usuario WHERE id_usuario = ?", String.class, s.idUsuario());
-            if (!AuthService.hash(actual).equals(guardada))
+            if (!AuthService.verificarContrasena(actual, guardada))
                 throw ApiException.validacion("La contrasena actual no es correcta.");
-            if (nueva.length() < 6) throw ApiException.validacion("La nueva contrasena debe tener al menos 6 caracteres.");
-            jdbc.update("UPDATE usuario SET contrasena = ? WHERE id_usuario = ?", AuthService.hash(nueva), s.idUsuario());
+            if (nueva.length() < AuthService.MIN_CONTRASENA)
+                throw ApiException.validacion("La nueva contrasena debe tener al menos " + AuthService.MIN_CONTRASENA + " caracteres.");
+            jdbc.update("UPDATE usuario SET contrasena = ?, debe_cambiar_contrasena = 0 WHERE id_usuario = ?",
+                    AuthService.hash(nueva), s.idUsuario());
+            auth.marcarContrasenaCambiada(s.idUsuario());
         }
         return Map.of("mensaje", "Perfil actualizado correctamente.");
     }
@@ -167,8 +193,8 @@ public class UsuarioController {
             throw ApiException.validacion("El telefono debe tener 9 digitos y empezar con 9.");
     }
 
-    private boolean existe(String sql, Object param) {
-        Integer n = jdbc.queryForObject(sql, Integer.class, param);
+    private boolean existe(String sql, Object... params) {
+        Integer n = jdbc.queryForObject(sql, Integer.class, params);
         return n != null && n > 0;
     }
 }

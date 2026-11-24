@@ -30,6 +30,15 @@ public class AuthController {
 
     @GetMapping("/me")
     public Sesion me(@RequestHeader(value = "Authorization", required = false) String a) {
-        return auth.requerir(a);
+        return auth.requerirPermitirCambioContrasena(a);
+    }
+
+    /** Cambio obligatorio de contrasena temporal en el primer ingreso. */
+    @PostMapping("/cambiar-contrasena")
+    public Map<String, Object> cambiarContrasena(@RequestHeader(value = "Authorization", required = false) String a,
+                                                 @RequestBody Map<String, Object> body) {
+        return auth.cambiarContrasenaObligatoria(a,
+                Datos.texto(body, "contrasena_actual"),
+                Datos.texto(body, "contrasena_nueva"));
     }
 }

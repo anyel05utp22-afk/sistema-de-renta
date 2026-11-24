@@ -105,6 +105,8 @@ public class PagoService {
         String ext = tieneArchivo ? extension(archivo.getOriginalFilename()) : null;
         if (tieneArchivo && !FORMATOS.contains(ext))
             throw ApiException.validacion("El archivo no cumple los formatos permitidos (PDF, JPG o PNG). Se rechazo la carga.");
+        if (tieneArchivo && !contenidoValidoParaExtension(archivo, ext))
+            throw ApiException.validacion("El contenido del archivo no corresponde a un documento PDF, JPG o PNG valido.");
 
         // El administrador registra pagos recibidos en oficina -> quedan validados directamente
         String estado = s.esAdmin() ? "VALIDADO" : "EN_REVISION";
@@ -271,7 +273,8 @@ public class PagoService {
   <line x1="365" y1="322" x2="575" y2="322" stroke="#64748b" stroke-dasharray="2,2"/>
   <text x="470" y="338" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#334155" text-anchor="middle">LA DIRECTIVA</text>
 </svg>
-""".formatted(numUnidad, propietario, montoStr, metodo, dia, mes, anio, nroRecibo);
+""".formatted(escaparXml(numUnidad), escaparXml(propietario), montoStr, escaparXml(metodo),
+                    escaparXml(dia), escaparXml(mes), escaparXml(anio), escaparXml(nroRecibo));
 
             java.nio.file.Files.writeString(destino, svg, java.nio.charset.StandardCharsets.UTF_8);
             return destino;
@@ -312,5 +315,42 @@ public class PagoService {
     private static String extension(String nombre) {
         if (nombre == null || !nombre.contains(".")) return "";
         return nombre.substring(nombre.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+    }
+
+    /** Verifica los magic bytes reales del archivo para impedir archivos disfrazados con otra extension. */
+    static boolean contenidoValidoParaExtension(MultipartFile archivo, String ext) {
+        if (archivo == null || ext == null) return false;
+        try (var in = archivo.getInputStream()) {
+            byte[] header = in.readNBytes(8);
+            if ("pdf".equals(ext)) {
+                return header.length >= 5
+                        && header[0] == 0x25 && header[1] == 0x50 && header[2] == 0x44
+                        && header[3] == 0x46 && header[4] == 0x2D; // %PDF-
+            }
+            if ("jpg".equals(ext) || "jpeg".equals(ext)) {
+                return header.length >= 3
+                        && (header[0] & 0xFF) == 0xFF
+                        && (header[1] & 0xFF) == 0xD8
+                        && (header[2] & 0xFF) == 0xFF;
+            }
+            if ("png".equals(ext)) {
+                return header.length >= 8
+                        && (header[0] & 0xFF) == 0x89 && header[1] == 0x50 && header[2] == 0x4E
+                        && header[3] == 0x47 && header[4] == 0x0D && header[5] == 0x0A
+                        && header[6] == 0x1A && header[7] == 0x0A;
+            }
+            return false;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static String escaparXml(String texto) {
+        if (texto == null) return "";
+        return texto.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 }

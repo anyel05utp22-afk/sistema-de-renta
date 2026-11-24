@@ -1,6 +1,7 @@
 package com.cruceta.cuotas.unidad;
 
 import com.cruceta.cuotas.auth.AuthService;
+import com.cruceta.cuotas.auth.Sesion;
 import com.cruceta.cuotas.comun.ApiException;
 import com.cruceta.cuotas.comun.Datos;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,13 +25,21 @@ public class UnidadController {
 
     @GetMapping
     public List<Map<String, Object>> listar(@RequestHeader(value = "Authorization", required = false) String a) {
-        auth.requerir(a);
+        Sesion s = auth.requerir(a);
+        if (s.esAdmin()) {
+            return jdbc.queryForList("""
+                    SELECT un.id_unidad, un.bloque, un.numero_unidad, un.estado,
+                           CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad,
+                           (SELECT CONCAT(u.nombre, ' ', u.apellido) FROM usuario u
+                             WHERE u.id_unidad = un.id_unidad AND u.id_rol = 2 AND u.estado_cuenta = 'ACTIVO' LIMIT 1) AS propietario
+                    FROM unidad un ORDER BY un.bloque, un.numero_unidad""");
+        }
+        // Un propietario/residente solo puede consultar su propia unidad, sin exponer datos de otros departamentos
+        if (s.idUnidad() == null) return List.of();
         return jdbc.queryForList("""
                 SELECT un.id_unidad, un.bloque, un.numero_unidad, un.estado,
-                       CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad,
-                       (SELECT CONCAT(u.nombre, ' ', u.apellido) FROM usuario u
-                         WHERE u.id_unidad = un.id_unidad AND u.id_rol = 2 AND u.estado_cuenta = 'ACTIVO' LIMIT 1) AS propietario
-                FROM unidad un ORDER BY un.bloque, un.numero_unidad""");
+                       CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad
+                FROM unidad un WHERE un.id_unidad = ?""", s.idUnidad());
     }
 
     @PostMapping

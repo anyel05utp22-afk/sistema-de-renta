@@ -4,6 +4,7 @@ import com.cruceta.cuotas.auth.AuthService;
 import com.cruceta.cuotas.comun.Datos;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.MediaTypeFactory;
@@ -68,13 +69,16 @@ public class PagoController {
         return pagos.recibos(auth.requerir(a));
     }
 
-    /** RF-049 Consultar comprobante de pago (el token va como parametro para abrirlo en otra pestania). */
+    /** RF-049 Consultar comprobante de pago (autenticado por cabecera Authorization, nunca en la URL). */
     @GetMapping("/comprobantes/{id}/archivo")
-    public ResponseEntity<Resource> archivo(@PathVariable int id, @RequestParam String token) {
-        Path f = pagos.archivoComprobante(auth.requerir("Bearer " + token), id);
+    public ResponseEntity<Resource> archivo(@RequestHeader(value = "Authorization", required = false) String a,
+                                            @PathVariable int id) {
+        Path f = pagos.archivoComprobante(auth.requerir(a), id);
         MediaType tipo = MediaTypeFactory.getMediaType(f.getFileName().toString()).orElse(MediaType.APPLICATION_OCTET_STREAM);
         return ResponseEntity.ok()
                 .contentType(tipo)
+                .cacheControl(CacheControl.noStore())
+                .header("X-Content-Type-Options", "nosniff")
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + f.getFileName() + "\"")
                 .body(new FileSystemResource(f));
     }

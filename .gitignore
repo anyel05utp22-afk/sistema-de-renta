@@ -13,6 +13,7 @@ buildNumber.properties
 *.log
 
 # Entornos y SO
+.env
 .DS_Store
 Thumbs.db
 desktop.ini
