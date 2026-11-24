@@ -51,6 +51,6 @@ Aplicación web completa desarrollada con **Java 17 (Spring Boot)**, **React 18*
      .\mvnw.cmd spring-boot:run
      ```
    - **Doble clic** en [`iniciar.bat`](iniciar.bat).
-4. Abre en el navegador: **http://localhost:8080**
+4. Abre en el navegador: **http://localhost:8082**
 
 > **Nota:** Por seguridad, las credenciales de acceso no se almacenan en texto plano ni se publican en la documentación del repositorio. Solicítalas al administrador del sistema.

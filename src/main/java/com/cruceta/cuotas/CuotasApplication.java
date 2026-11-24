@@ -12,6 +12,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class CuotasApplication {
     public static void main(String[] args) {
         SpringApplication.run(CuotasApplication.class, args);
-        System.out.println("\n>>> Sistema listo: abre http://localhost:8080 en tu navegador\n");
+        System.out.println("\n>>> Sistema listo: abre http://localhost:8082 en tu navegador\n");
     }
 }

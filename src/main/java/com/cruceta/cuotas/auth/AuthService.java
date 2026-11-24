@@ -259,6 +259,13 @@ public class AuthService {
         return s;
     }
 
+    /** Administrador o Miembro de la Junta Directiva (auditoria, reportes y fiscalizacion). */
+    public Sesion requerirAdminOJunta(String authHeader) {
+        Sesion s = requerir(authHeader);
+        if (!s.tieneAccesoGestion()) throw ApiException.prohibido("Esta operacion requiere rol de Administrador o Junta Directiva.");
+        return s;
+    }
+
     /** Permite al usuario cambiar su contrasena temporal en el primer inicio de sesion. */
     public Map<String, Object> cambiarContrasenaObligatoria(String authHeader, String actual, String nueva) {
         String t = token(authHeader);

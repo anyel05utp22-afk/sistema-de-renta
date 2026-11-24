@@ -4,6 +4,15 @@ package com.cruceta.cuotas.auth;
 public record Sesion(int idUsuario, String nombreCompleto, String correo, String rol,
                      Integer idUnidad, String unidad, boolean debeCambiarContrasena) {
     public boolean esAdmin() {
-        return "ADMINISTRADOR".equals(rol);
+        return "ADMINISTRADOR".equalsIgnoreCase(rol);
+    }
+
+    public boolean esJunta() {
+        return "JUNTA DIRECTIVA".equalsIgnoreCase(rol) || "JUNTA".equalsIgnoreCase(rol);
+    }
+
+    public boolean tieneAccesoGestion() {
+        return esAdmin() || esJunta();
     }
 }
+

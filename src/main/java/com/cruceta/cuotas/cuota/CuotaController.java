@@ -84,16 +84,39 @@ public class CuotaController {
         return cuotas.estadoCuenta(s, idUnidad);
     }
 
+    @PostMapping("/cuotas/{id}/recordatorio")
+    public Map<String, Object> recordatorio(@RequestHeader(value = "Authorization", required = false) String a,
+                                            @PathVariable int id) {
+        auth.requerirAdminOJunta(a);
+        return cuotas.enviarRecordatorio(id);
+    }
+
+    @PostMapping("/cuotas/recordatorio-masivo")
+    public Map<String, Object> recordatorioMasivo(@RequestHeader(value = "Authorization", required = false) String a,
+                                                  @RequestParam(required = false) String periodo) {
+        auth.requerirAdminOJunta(a);
+        return cuotas.recordatorioMasivo(periodo);
+    }
+
+    @PostMapping("/morosidad/alertar")
+    public Map<String, Object> alertarMorosidad(@RequestHeader(value = "Authorization", required = false) String a,
+                                                @RequestBody(required = false) Map<String, Object> b) {
+        auth.requerirAdminOJunta(a);
+        Integer idCuota = b != null && b.containsKey("id_cuota") ? Datos.entero(b.get("id_cuota")) : null;
+        return cuotas.alertarMorosidad(idCuota);
+    }
+
     @GetMapping("/morosidad")
-    public List<Map<String, Object>> morosidad(@RequestHeader(value = "Authorization", required = false) String a) {
-        auth.requerirAdmin(a);
-        return cuotas.morosidad();
+    public List<Map<String, Object>> morosidad(@RequestHeader(value = "Authorization", required = false) String a,
+                                               @RequestParam(required = false) String filtro) {
+        auth.requerirAdminOJunta(a);
+        return cuotas.morosidadFiltrada(filtro);
     }
 
     @GetMapping("/dashboard")
     public Map<String, Object> dashboard(@RequestHeader(value = "Authorization", required = false) String a,
                                          @RequestParam(required = false) String periodo) {
-        auth.requerirAdmin(a);
+        auth.requerirAdminOJunta(a);
         return cuotas.dashboard(periodo);
     }
 }
