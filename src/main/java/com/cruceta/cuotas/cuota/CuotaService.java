@@ -276,8 +276,7 @@ public class CuotaService {
         return jdbc.queryForList("""
                 SELECT v.*,
                        (SELECT u.telefono FROM usuario u WHERE u.id_unidad = v.id_unidad AND u.id_rol = 2 LIMIT 1) AS telefono
-                FROM (""" + VISTA_CUOTA + """
-                ) v WHERE """ + condicion + " ORDER BY v.dias_atraso DESC, v.unidad, v.periodo");
+                FROM (""" + VISTA_CUOTA + ") v WHERE " + condicion + " ORDER BY v.dias_atraso DESC, v.unidad, v.periodo");
     }
 
     // ===================== Enviar recordatorio de cobro =====================
