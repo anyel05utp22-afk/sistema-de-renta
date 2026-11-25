@@ -234,9 +234,22 @@ SELECT id_unidad, '2026-09', '2026-09-01', '2026-09-30',
 FROM unidad;
 
 INSERT IGNORE INTO cuota (id_unidad, periodo, fecha_emision, fecha_vencimiento, estado_cuota)
-SELECT id_unidad, '2026-10', '2026-10-01', '2026-10-31',
+SELECT id_unidad, '2026-10', '2026-10-01',
+       CASE
+           WHEN id_unidad IN (16, 19) THEN '2026-10-15'
+           WHEN id_unidad = 3 THEN '2026-11-20'
+           WHEN id_unidad = 4 THEN '2026-11-17'
+           WHEN id_unidad = 6 THEN '2026-11-13'
+           ELSE '2026-10-31'
+       END,
        CASE WHEN id_unidad IN (1, 2, 17) THEN 'PAGADA' ELSE 'PENDIENTE' END
 FROM unidad;
+
+-- Ajuste idempotente de vencimientos de prueba (morosos > 30 dias y deudores con pocos dias de retraso)
+UPDATE cuota SET fecha_vencimiento = '2026-10-15', estado_cuota = 'VENCIDA' WHERE periodo = '2026-10' AND id_unidad IN (16, 19) AND estado_cuota <> 'PAGADA';
+UPDATE cuota SET fecha_vencimiento = '2026-11-20', estado_cuota = 'VENCIDA' WHERE periodo = '2026-10' AND id_unidad = 3 AND estado_cuota <> 'PAGADA';
+UPDATE cuota SET fecha_vencimiento = '2026-11-17', estado_cuota = 'VENCIDA' WHERE periodo = '2026-10' AND id_unidad = 4 AND estado_cuota <> 'PAGADA';
+UPDATE cuota SET fecha_vencimiento = '2026-11-13', estado_cuota = 'VENCIDA' WHERE periodo = '2026-10' AND id_unidad = 6 AND estado_cuota <> 'PAGADA';
 
 -- Desglose por departamento:
 --   - Conceptos 1..6 (S/. 2,094.00) se dividen entre 20 dptos = S/. 104.70 redondeado a S/. 105.00
