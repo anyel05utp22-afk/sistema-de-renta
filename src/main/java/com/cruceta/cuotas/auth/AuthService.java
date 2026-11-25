@@ -224,6 +224,13 @@ public class AuthService {
         sesiones.entrySet().removeIf(e -> e.getValue().sesion.idUsuario() == idUsuario);
     }
 
+    /** Limpia el bloqueo en memoria de un correo (ej. tras completar recuperacion aprobada). */
+    public void limpiarIntentosCorreo(String correo) {
+        if (correo != null) {
+            intentosPorCorreo.remove(correo.trim().toLowerCase(Locale.ROOT));
+        }
+    }
+
     /** Obtiene la sesion activa o lanza 401; bloquea si debe cambiar contrasena temporal. */
     public Sesion requerir(String authHeader) {
         return requerirInterno(authHeader, true);

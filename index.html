@@ -67,14 +67,14 @@ const API = {
     put: (url, cuerpo) => API.request("PUT", url, cuerpo),
     form: (url, formData) => API.request("POST", url, formData, true),
 
-    async obtenerComprobante(idComprobante) {
+    async obtenerArchivoProtegido(url, nombreDefecto) {
         const opciones = { method: "GET", headers: {} };
         if (API.token()) opciones.headers["Authorization"] = "Bearer " + API.token();
         let res;
         try {
-            res = await fetch(`${BASE_API}/api/comprobantes/${idComprobante}/archivo`, opciones);
+            res = await fetch(BASE_API + url, opciones);
         } catch (err) {
-            throw new Error("No se pudo conectar al servidor para obtener el comprobante.");
+            throw new Error("No se pudo conectar al servidor para obtener el archivo.");
         }
         if (!res.ok) {
             let datos = null;
@@ -83,15 +83,21 @@ const API = {
                 sessionStorage.clear();
                 window.dispatchEvent(new Event("sesion-expirada"));
             }
-            throw new Error((datos && (datos.error || datos.message)) || "No se pudo abrir el comprobante.");
+            throw new Error((datos && (datos.error || datos.message)) || "No se pudo abrir el archivo.");
         }
         const blob = await res.blob();
         const contentType = res.headers.get("Content-Type") || blob.type || "application/octet-stream";
         const disp = res.headers.get("Content-Disposition") || "";
         const m = disp.match(/filename="([^"]+)"/i);
-        const nombre = m ? m[1] : `comprobante_${idComprobante}`;
+        const nombre = m ? m[1] : nombreDefecto;
         return { blobUrl: URL.createObjectURL(blob), contentType, nombre };
     },
+
+    obtenerComprobante: (idComprobante) =>
+        API.obtenerArchivoProtegido(`/api/comprobantes/${idComprobante}/archivo`, `comprobante_${idComprobante}`),
+
+    obtenerComprobanteRecuperacion: (idSolicitud) =>
+        API.obtenerArchivoProtegido(`/api/seguridad/solicitudes/${idSolicitud}/comprobante`, `prueba_recuperacion_${idSolicitud}`),
 };
 
 
@@ -198,14 +204,18 @@ function InputContrasena(props) {
 }
 
 const COLOR_ESTADO = {
-    PAGADA: "b-verde", VALIDADO: "b-verde", ACTIVO: "b-verde", ACTIVA: "b-verde", "AL DIA": "b-verde",
+    PAGADA: "b-verde", VALIDADO: "b-verde", ACTIVO: "b-verde", ACTIVA: "b-verde", "AL DIA": "b-verde", COMPLETADA: "b-verde",
     PENDIENTE: "b-amarillo", EN_REVISION: "b-amarillo", DEUDOR: "b-amarillo",
-    VENCIDA: "b-rojo", MOROSO: "b-rojo", RECHAZADO: "b-rojo", ANULADO: "b-gris", INACTIVO: "b-gris", INACTIVA: "b-gris",
+    APROBADA: "b-azul",
+    VENCIDA: "b-rojo", MOROSO: "b-rojo", RECHAZADO: "b-rojo", RECHAZADA: "b-rojo", ANULADO: "b-gris", INACTIVO: "b-gris", INACTIVA: "b-gris",
 };
 const TEXTO_ESTADO = {
     EN_REVISION: "Pagado en revisión",
     VALIDADO: "Verificado",
     ANULADO: "Anulado",
+    APROBADA: "Aprobada (esperando cambio)",
+    COMPLETADA: "Completada",
+    RECHAZADA: "Rechazada",
     DEUDOR: "Deudor (≤ 30 días)",
     MOROSO: "Moroso (> 30 días)",
     "AL DIA": "Al día",
@@ -1076,6 +1086,12 @@ function Dashboard({ ir }) {
             <div className="kpis">
                 <div className="kpi"><span>Departamentos activos</span><strong>{d.unidades}</strong></div>
                 <div className="kpi alerta-kpi"><span>Pagos por validar</span><strong>{d.pagos_en_revision}</strong></div>
+                <div className={"kpi " + (Number(d.alertas_seguridad || 0) > 0 ? "alerta-kpi" : "")}>
+                    <span>Alertas de seguridad</span>
+                    <strong style={{ color: Number(d.alertas_seguridad || 0) > 0 ? "#b91c1c" : "#059669" }}>
+                        {d.alertas_seguridad ?? 0}
+                    </strong>
+                </div>
                 <div className="kpi"><span>Morosos (&gt; 30 días)</span><strong style={{ color: "#b91c1c" }}>{d.total_morosos ?? d.unidades_morosas}</strong></div>
                 <div className="kpi"><span>Deudores (&le; 30 días)</span><strong style={{ color: "#d97706" }}>{d.total_deudores ?? 0}</strong></div>
                 <div className="kpi"><span>Deuda vencida ({d.cuotas_vencidas} cuotas)</span><strong style={{ color: "#b91c1c" }}>{soles(d.deuda_vencida)}</strong></div>
@@ -1084,7 +1100,183 @@ function Dashboard({ ir }) {
                 <button className="btn verde" onClick={() => ir("conceptos")}>Conceptos y cálculo de cuotas</button>
                 <button className="btn" onClick={() => ir("pagos", { estado: "EN_REVISION" })}>Validar pagos ({d.pagos_en_revision})</button>
                 <button className="btn rojo" onClick={() => ir("morosidad")}>Ver morosidad</button>
+                <button className="btn naranja" onClick={() => ir("seguridad")}>
+                    Alerta de seguridad ({d.alertas_seguridad ?? 0})
+                </button>
             </div>
+        </div>
+    );
+}
+
+/** Modulo Alerta de seguridad: gestion de solicitudes de restablecimiento de contrasena (RF-005) */
+function AlertasSeguridad() {
+    const [solicitudes, recargar, error] = useDatos("/api/seguridad/solicitudes");
+    const [filtroEstado, setFiltroEstado] = useState("");
+    const [rechazo, setRechazo] = useState(null); // {id, motivo}
+    const [visor, setVisor] = useState(null);
+    const [cargandoComp, setCargandoComp] = useState(false);
+    const [res, setRes] = useState(null);
+
+    const cerrarVisor = () => {
+        if (visor && visor.blobUrl) URL.revokeObjectURL(visor.blobUrl);
+        setVisor(null);
+    };
+
+    useEffect(() => {
+        return () => { if (visor && visor.blobUrl) URL.revokeObjectURL(visor.blobUrl); };
+    }, [visor]);
+
+    const verBoleta = async (s) => {
+        setCargandoComp(true);
+        setRes(null);
+        try {
+            const data = await API.obtenerComprobanteRecuperacion(s.id_solicitud);
+            setVisor({
+                ...data,
+                titulo: `Boleta de pago de prueba — ${s.usuario} (${s.unidad || s.correo})`,
+            });
+        } catch (e) {
+            setRes({ ok: false, mensaje: e.message });
+        }
+        setCargandoComp(false);
+    };
+
+    const aprobar = async (s) => {
+        if (!confirm(`¿Aprobar la solicitud de restablecimiento de contraseña de ${s.usuario} (${s.correo})?\nEl usuario podrá definir una nueva contraseña desde la opción "Recuperar contraseña".`)) return;
+        try {
+            const r = await API.post(`/api/seguridad/solicitudes/${s.id_solicitud}/aprobar`);
+            setRes({ ok: true, titulo: "¡Solicitud aprobada!", mensaje: r.mensaje });
+            recargar();
+        } catch (e) {
+            setRes({ ok: false, mensaje: e.message });
+        }
+    };
+
+    const rechazar = async () => {
+        if (!rechazo.motivo.trim()) {
+            setRes({ ok: false, titulo: "¡Falta el motivo!", mensaje: "Debe ingresar el motivo del rechazo." });
+            return;
+        }
+        try {
+            const r = await API.post(`/api/seguridad/solicitudes/${rechazo.id}/rechazar`, { motivo: rechazo.motivo });
+            setRes({ ok: true, titulo: "Solicitud rechazada", mensaje: r.mensaje });
+            setRechazo(null);
+            recargar();
+        } catch (e) {
+            setRes({ ok: false, mensaje: e.message });
+        }
+    };
+
+    const lista = (solicitudes || []).filter((s) => !filtroEstado || s.estado === filtroEstado);
+    const pendientes = (solicitudes || []).filter((s) => s.estado === "PENDIENTE").length;
+    const aprobadas = (solicitudes || []).filter((s) => s.estado === "APROBADA").length;
+    const completadas = (solicitudes || []).filter((s) => s.estado === "COMPLETADA").length;
+
+    return (
+        <div className="card">
+            <h2>Alerta de seguridad — Solicitudes de restablecimiento de contraseña</h2>
+            <Alerta tipo="info">
+                Cuando un propietario solicita restablecer su contraseña, su cuenta se desactiva temporalmente hasta que la administración verifique su boleta de pago de prueba y apruebe el cambio.
+            </Alerta>
+            <Resultado res={res} />
+
+            {visor && (
+                <div className="modal-backdrop" onClick={cerrarVisor}>
+                    <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-head">
+                            <h3>{visor.titulo}</h3>
+                            <div className="acciones">
+                                <a className="btn chico verde" href={visor.blobUrl} download={visor.nombre}>Descargar</a>
+                                <button type="button" className="btn chico gris" onClick={cerrarVisor}>Cerrar</button>
+                            </div>
+                        </div>
+                        <div className="modal-body">
+                            {visor.contentType.includes("pdf") ? (
+                                <iframe src={visor.blobUrl} title="Boleta de pago de prueba PDF" />
+                            ) : (
+                                <img src={visor.blobUrl} alt="Boleta de pago de prueba" />
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {rechazo && (
+                <Alerta tipo="warn" titulo={"Rechazar solicitud #" + rechazo.id}>
+                    <textarea rows="2" placeholder="Motivo del rechazo (obligatorio)" value={rechazo.motivo}
+                        onChange={(e) => setRechazo({ ...rechazo, motivo: e.target.value })} />
+                    <div className="acciones" style={{ marginTop: 8 }}>
+                        <button className="btn rojo chico" onClick={rechazar}>Confirmar rechazo</button>
+                        <button className="btn gris chico" onClick={() => setRechazo(null)}>Cancelar</button>
+                    </div>
+                </Alerta>
+            )}
+
+            <div className="kpis">
+                <div className={"kpi " + (pendientes > 0 ? "alerta-kpi" : "")}>
+                    <span>Pendientes de revisión</span>
+                    <strong style={{ color: pendientes > 0 ? "#b91c1c" : "#0f172a" }}>{pendientes}</strong>
+                </div>
+                <div className="kpi"><span>Aprobadas (pend. cambio)</span><strong style={{ color: "#1d4ed8" }}>{aprobadas}</strong></div>
+                <div className="kpi ok-kpi"><span>Completadas</span><strong>{completadas}</strong></div>
+                <div className="kpi"><span>Total solicitudes</span><strong>{(solicitudes || []).length}</strong></div>
+            </div>
+
+            <div className="barra">
+                <Campo label="Filtrar por estado:">
+                    <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+                        <option value="">Todos</option>
+                        <option value="PENDIENTE">Pendiente de revisión</option>
+                        <option value="APROBADA">Aprobada (esperando cambio)</option>
+                        <option value="COMPLETADA">Completada</option>
+                        <option value="RECHAZADA">Rechazada</option>
+                    </select>
+                </Campo>
+                <button className="btn gris" onClick={recargar}>Actualizar lista</button>
+            </div>
+
+            {!solicitudes ? <Cargando error={error} /> : (
+                <div className="tabla-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Usuario / DNI</th>
+                                <th>Unidad</th>
+                                <th>Correo</th>
+                                <th>Cuenta</th>
+                                <th>Solicitud</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {lista.length === 0 && <FilaVacia cols={7} texto="No hay alertas de seguridad registradas." />}
+                            {lista.map((s) => (
+                                <tr key={s.id_solicitud}>
+                                    <td>{s.fecha_solicitud}</td>
+                                    <td><b>{s.usuario}</b><div className="ayuda">DNI: {s.dni}</div></td>
+                                    <td>{s.unidad || "-"}</td>
+                                    <td>{s.correo}</td>
+                                    <td><Estado valor={s.estado_cuenta} /></td>
+                                    <td>
+                                        <Estado valor={s.estado} />
+                                        {s.observacion && <div className="ayuda">Motivo: {s.observacion}</div>}
+                                    </td>
+                                    <td className="acciones">
+                                        <button type="button" className="btn chico blanco" disabled={cargandoComp} onClick={() => verBoleta(s)}>
+                                            Ver boleta
+                                        </button>
+                                        {s.estado === "PENDIENTE" && <>
+                                            <button type="button" className="btn chico verde" onClick={() => aprobar(s)}>Aprobar</button>
+                                            <button type="button" className="btn chico rojo" onClick={() => setRechazo({ id: s.id_solicitud, motivo: "" })}>Rechazar</button>
+                                        </>}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
     );
 }
@@ -2136,7 +2328,21 @@ function Login({ alEntrar }) {
     const [correo, setCorreo] = useState("");
     const [contrasena, setContrasena] = useState("");
     const [recuperar, setRecuperar] = useState(false);
+    const [pasoRec, setPasoRec] = useState("CORREO"); // CORREO | SOLICITAR | PENDIENTE | APROBADA
+    const [archivoPrueba, setArchivoPrueba] = useState(null);
+    const [nuevaPass, setNuevaPass] = useState("");
+    const [confirmarPass, setConfirmarPass] = useState("");
+    const [cargando, setCargando] = useState(false);
     const [res, setRes] = useState(null);
+
+    const reiniciarRecuperacion = (abrir) => {
+        setRecuperar(abrir);
+        setPasoRec("CORREO");
+        setArchivoPrueba(null);
+        setNuevaPass("");
+        setConfirmarPass("");
+        setRes(null);
+    };
 
     const entrar = async (e) => {
         e.preventDefault();
@@ -2147,22 +2353,90 @@ function Login({ alEntrar }) {
             sessionStorage.setItem("usuario", JSON.stringify(r.usuario));
             alEntrar(r.usuario);
         } catch (er) {
-            setRes({ ok: false, titulo: "¡Credenciales Incorrectas!", mensaje: er.message });
+            setRes({ ok: false, titulo: "¡No se pudo iniciar sesión!", mensaje: er.message });
         }
     };
 
-    const enviarRecuperacion = (e) => {
-        e.preventDefault();
+    const verificarCorreoRecuperacion = async (e) => {
+        if (e) e.preventDefault();
+        setRes(null);
         if (!correo.trim()) {
-            setRes({ ok: false, titulo: "Ingrese su correo", mensaje: "Debe ingresar el correo electrónico de su cuenta." });
+            setRes({ ok: false, titulo: "Ingrese su correo", mensaje: "Debe ingresar el correo electrónico registrado de su cuenta." });
             return;
         }
-        // Flujo alternativo RF-005: mensaje generico sin revelar si el correo existe
-        setRes({
-            ok: true,
-            titulo: "¡Solicitud procesada!",
-            mensaje: "Si el correo ingresado corresponde a una cuenta registrada, recibirá las instrucciones para restablecer su contraseña."
-        });
+        setCargando(true);
+        try {
+            const r = await API.post("/api/auth/recuperar/estado", { correo });
+            setPasoRec(r.estado);
+            if (r.estado === "PENDIENTE") {
+                setRes({ ok: true, titulo: "Solicitud en revisión", mensaje: r.mensaje });
+            } else if (r.estado === "APROBADA") {
+                setRes({ ok: true, titulo: "¡Solicitud aprobada!", mensaje: r.mensaje });
+            }
+        } catch (er) {
+            setRes({ ok: false, mensaje: er.message });
+        }
+        setCargando(false);
+    };
+
+    const enviarSolicitudRecuperacion = async (e) => {
+        e.preventDefault();
+        setRes(null);
+        if (!archivoPrueba) {
+            setRes({ ok: false, titulo: "Falta el comprobante de pago", mensaje: "Debe adjuntar una boleta o comprobante de pago (PDF, JPG o PNG) como prueba." });
+            return;
+        }
+        if (!/\.(pdf|jpe?g|png)$/i.test(archivoPrueba.name)) {
+            setRes({ ok: false, mensaje: "Formato no permitido. Adjunte un archivo PDF, JPG o PNG." });
+            return;
+        }
+        if (archivoPrueba.size > 5 * 1024 * 1024) {
+            setRes({ ok: false, mensaje: "El archivo supera el tamaño máximo de 5 MB." });
+            return;
+        }
+        const fd = new FormData();
+        fd.append("correo", correo.trim());
+        fd.append("archivo", archivoPrueba);
+        setCargando(true);
+        try {
+            const r = await API.form("/api/auth/recuperar/solicitar", fd);
+            setPasoRec("PENDIENTE");
+            setArchivoPrueba(null);
+            setRes({ ok: true, titulo: "Solicitud enviada al administrador", mensaje: r.mensaje });
+        } catch (er) {
+            setRes({ ok: false, titulo: "No se pudo enviar la solicitud", mensaje: er.message });
+        }
+        setCargando(false);
+    };
+
+    const actualizarContrasenaRecuperada = async (e) => {
+        e.preventDefault();
+        setRes(null);
+        if (nuevaPass.length < 8) {
+            setRes({ ok: false, mensaje: "La nueva contraseña debe tener al menos 8 caracteres." });
+            return;
+        }
+        if (nuevaPass !== confirmarPass) {
+            setRes({ ok: false, mensaje: "Las contraseñas ingresadas no coinciden." });
+            return;
+        }
+        setCargando(true);
+        try {
+            const r = await API.post("/api/auth/recuperar/confirmar", {
+                correo: correo.trim(),
+                contrasena_nueva: nuevaPass,
+                confirmar_contrasena: confirmarPass,
+            });
+            setRecuperar(false);
+            setPasoRec("CORREO");
+            setContrasena("");
+            setNuevaPass("");
+            setConfirmarPass("");
+            setRes({ ok: true, titulo: "¡Contraseña actualizada!", mensaje: r.mensaje });
+        } catch (er) {
+            setRes({ ok: false, mensaje: er.message });
+        }
+        setCargando(false);
     };
 
     return (
@@ -2173,16 +2447,86 @@ function Login({ alEntrar }) {
             </div>
             <div className="card login">
                 {recuperar ? (
-                    <form onSubmit={enviarRecuperacion}>
+                    <div>
                         <h2>Recuperar contraseña (RF-005)</h2>
                         <Resultado res={res} />
-                        <Campo label="Correo Electrónico Registrado:">
-                            <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="correo@ejemplo.com" />
-                        </Campo>
-                        <button className="btn bloque">Enviar instrucciones</button>
+
+                        {pasoRec === "CORREO" && (
+                            <form onSubmit={verificarCorreoRecuperacion}>
+                                <Alerta tipo="info">
+                                    Ingrese su correo registrado. Si aún no envió su solicitud, se le pedirá adjuntar un comprobante de pago como prueba. Si el administrador ya la aprobó, podrá definir su nueva contraseña.
+                                </Alerta>
+                                <Campo label="Correo Electrónico Registrado:">
+                                    <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="correo@ejemplo.com" required />
+                                </Campo>
+                                <button className="btn bloque" disabled={cargando}>{cargando ? "Verificando..." : "Continuar"}</button>
+                            </form>
+                        )}
+
+                        {pasoRec === "SOLICITAR" && (
+                            <form onSubmit={enviarSolicitudRecuperacion}>
+                                <Alerta tipo="warn" titulo="Verificación de identidad requerida">
+                                    Adjunte un comprobante o boleta de pago como prueba. Al enviar la solicitud, su cuenta se desactivará temporalmente hasta que el administrador la apruebe.
+                                </Alerta>
+                                <Campo label="Correo Electrónico:">
+                                    <input type="email" value={correo} disabled />
+                                </Campo>
+                                <div style={{ marginTop: 12 }}>
+                                    <Campo label="Comprobante de pago de prueba (PDF, JPG o PNG):" ayuda="Tamaño máximo 5 MB.">
+                                        <input type="file" accept=".pdf,.jpg,.jpeg,.png"
+                                            onChange={(e) => setArchivoPrueba(e.target.files[0] || null)} required />
+                                    </Campo>
+                                </div>
+                                <button className="btn verde bloque" disabled={cargando}>
+                                    {cargando ? "Enviando solicitud..." : "Enviar solicitud al administrador"}
+                                </button>
+                                <button type="button" className="btn gris bloque" style={{ marginTop: 8 }}
+                                    onClick={() => { setPasoRec("CORREO"); setRes(null); }}>Cambiar correo</button>
+                            </form>
+                        )}
+
+                        {pasoRec === "PENDIENTE" && (
+                            <div>
+                                <Campo label="Correo en verificación:">
+                                    <input type="email" value={correo} disabled />
+                                </Campo>
+                                <p className="ayuda" style={{ marginTop: 10 }}>
+                                    Su cuenta está desactivada temporalmente por seguridad. Cuando el administrador apruebe su solicitud en <b>Alerta de seguridad</b>, presione el botón de abajo para crear su nueva contraseña.
+                                </p>
+                                <button type="button" className="btn bloque" disabled={cargando} onClick={() => verificarCorreoRecuperacion()}>
+                                    {cargando ? "Verificando..." : "Verificar si ya fue aprobada"}
+                                </button>
+                                <button type="button" className="btn gris bloque" style={{ marginTop: 8 }}
+                                    onClick={() => { setPasoRec("CORREO"); setRes(null); }}>Consultar otro correo</button>
+                            </div>
+                        )}
+
+                        {pasoRec === "APROBADA" && (
+                            <form onSubmit={actualizarContrasenaRecuperada}>
+                                <Campo label="Cuenta aprobada:">
+                                    <input type="email" value={correo} disabled />
+                                </Campo>
+                                <div style={{ marginTop: 12 }}>
+                                    <Campo label="Nueva contraseña:" ayuda="Mínimo 8 caracteres.">
+                                        <InputContrasena minLength="8" value={nuevaPass}
+                                            onChange={(e) => setNuevaPass(e.target.value)} placeholder="Nueva contraseña" required />
+                                    </Campo>
+                                </div>
+                                <div style={{ marginTop: 12 }}>
+                                    <Campo label="Confirmar nueva contraseña:">
+                                        <InputContrasena minLength="8" value={confirmarPass}
+                                            onChange={(e) => setConfirmarPass(e.target.value)} placeholder="Repita su nueva contraseña" required />
+                                    </Campo>
+                                </div>
+                                <button className="btn verde bloque" disabled={cargando}>
+                                    {cargando ? "Actualizando..." : "Actualizar contraseña"}
+                                </button>
+                            </form>
+                        )}
+
                         <button type="button" className="btn blanco bloque" style={{ marginTop: 8 }}
-                            onClick={() => { setRecuperar(false); setRes(null); }}>Volver a iniciar sesión</button>
-                    </form>
+                            onClick={() => reiniciarRecuperacion(false)}>Volver a iniciar sesión</button>
+                    </div>
                 ) : (
                     <form onSubmit={entrar}>
                         <h2>Iniciar Sesión (RF-003)</h2>
@@ -2197,7 +2541,7 @@ function Login({ alEntrar }) {
                         </div>
                         <button className="btn bloque">Ingresar al Sistema</button>
                         <button type="button" className="btn blanco bloque" style={{ marginTop: 8 }}
-                            onClick={() => { setRecuperar(true); setRes(null); }}>¿Olvidó su contraseña?</button>
+                            onClick={() => reiniciarRecuperacion(true)}>¿Olvidó su contraseña?</button>
                     </form>
                 )}
             </div>
@@ -2317,6 +2661,7 @@ function App() {
 
     const menu = esAdmin ? [
         ["dashboard", "Consultar dashboard administrativo"],
+        ["seguridad", "Alerta de seguridad"],
         ["rendicion", "Rendición de cuentas e historial"],
         ["movimientos", "Movimientos financieros y auditoría"],
         ["morosidad", "Reporte de morosidad"],
@@ -2366,6 +2711,7 @@ function App() {
                 </div>
                 <div className="main">
                     {vista === "dashboard" && <Dashboard ir={ir} />}
+                    {vista === "seguridad" && <AlertasSeguridad />}
                     {vista === "rendicion" && <RendicionCuentas />}
                     {vista === "movimientos" && <Movimientos />}
                     {vista === "conceptos" && <Conceptos />}

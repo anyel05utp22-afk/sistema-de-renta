@@ -1,6 +1,7 @@
 package com.cruceta.cuotas;
 
 import com.cruceta.cuotas.auth.AuthService;
+import com.cruceta.cuotas.auth.RecuperacionService;
 import com.cruceta.cuotas.auth.Sesion;
 import com.cruceta.cuotas.comun.ApiException;
 import com.cruceta.cuotas.pago.PagoController;
@@ -277,5 +278,48 @@ class SecurityFixesTest {
         assertEquals(1, res.size());
         assertFalse(res.get(0).containsKey("propietario"));
         verify(jdbc).queryForList(contains("WHERE un.id_unidad = ?"), eq(1));
+    }
+
+    @Test
+    void rf005_recuperacionConBoletaDesactivaCuentaYActualizaContrasenaTrasAprobacion() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        AuthService auth = mock(AuthService.class);
+        RecuperacionService rec = new RecuperacionService(jdbc, auth);
+
+        // 1. Archivo invalido (magic bytes falsos) es rechazado
+        MockMultipartFile falso = new MockMultipartFile("archivo", "boleta.png", "image/png",
+                "esto no es una imagen png".getBytes(StandardCharsets.UTF_8));
+        assertThrows(ApiException.class, () -> rec.solicitar("luis.torres@email.com", falso));
+
+        // 2. Solicitud valida con PNG real desactiva la cuenta e invalida sesiones
+        MockMultipartFile pngReal = new MockMultipartFile("archivo", "boleta.png", "image/png",
+                new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00});
+        Map<String, Object> usr = Map.of("id_usuario", 2, "correo", "luis.torres@email.com",
+                "estado_cuenta", "ACTIVO", "nombre_rol", "PROPIETARIO");
+        when(jdbc.queryForList(contains("FROM usuario u"), eq("luis.torres@email.com"))).thenReturn(List.of(usr));
+        when(jdbc.queryForObject(contains("FROM solicitud_recuperacion"), eq(Integer.class), eq(2))).thenReturn(0);
+
+        Map<String, Object> sol = rec.solicitar("luis.torres@email.com", pngReal);
+        assertEquals("PENDIENTE", sol.get("estado"));
+        verify(jdbc).update("UPDATE usuario SET estado_cuenta = 'INACTIVO' WHERE id_usuario = ?", 2);
+        verify(auth).invalidarSesionesDeUsuario(2);
+
+        // 3. Aprobacion por administrador
+        when(jdbc.queryForList(contains("WHERE id_solicitud = ?"), eq(10)))
+                .thenReturn(List.of(Map.of("id_solicitud", 10, "id_usuario", 2, "correo", "luis.torres@email.com", "estado", "PENDIENTE")));
+        Map<String, Object> aprob = rec.aprobar(10, 1);
+        assertTrue(aprob.get("mensaje").toString().contains("aprobada"));
+
+        // 4. Confirmacion de nueva contrasena: exige coincidencia y >= 8 caracteres, guarda BCrypt y reactiva cuenta
+        when(jdbc.queryForList(contains("estado = 'APROBADA'"), eq("luis.torres@email.com")))
+                .thenReturn(List.of(Map.of("id_solicitud", 10, "id_usuario", 2)));
+        assertThrows(ApiException.class, () -> rec.confirmarNuevaContrasena("luis.torres@email.com", "ClaveNueva!1", "OtraClave!2"));
+        assertThrows(ApiException.class, () -> rec.confirmarNuevaContrasena("luis.torres@email.com", "corta1", "corta1"));
+
+        Map<String, Object> fin = rec.confirmarNuevaContrasena("luis.torres@email.com", "NuevaSegura#2026", "NuevaSegura#2026");
+        assertTrue(fin.get("mensaje").toString().contains("actualizada"));
+        verify(jdbc).update(contains("SET contrasena = ?, estado_cuenta = 'ACTIVO'"),
+                argThat((Object h) -> h instanceof String s && s.startsWith("$2a$")), eq(2));
+        verify(jdbc).update(contains("SET estado = 'COMPLETADA'"), eq(10));
     }
 }

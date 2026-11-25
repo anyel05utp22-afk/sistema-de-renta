@@ -284,6 +284,8 @@ input.invalido {
 .btn.verde:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(5, 150, 105, 0.28); }
 .btn.rojo { background: #dc2626; }
 .btn.rojo:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(220, 38, 38, 0.28); }
+.btn.naranja { background: #d97706; }
+.btn.naranja:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(217, 119, 6, 0.3); }
 .btn.gris { background: #64748b; }
 .btn.gris:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(100, 116, 139, 0.25); }
 .btn.blanco { background: #fff; color: #1e3a8a; border: 1px solid #1e3a8a; }

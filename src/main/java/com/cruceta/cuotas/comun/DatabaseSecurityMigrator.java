@@ -34,6 +34,21 @@ public class DatabaseSecurityMigrator {
             agregarColumnaSiFalta("intentos_fallidos", "INT NOT NULL DEFAULT 0");
             agregarColumnaSiFalta("bloqueado_hasta", "DATETIME NULL");
             agregarColumnaSiFalta("debe_cambiar_contrasena", "TINYINT(1) NOT NULL DEFAULT 0");
+            jdbc.execute("""
+                    CREATE TABLE IF NOT EXISTS solicitud_recuperacion (
+                        id_solicitud      INT AUTO_INCREMENT PRIMARY KEY,
+                        id_usuario        INT NOT NULL,
+                        correo            VARCHAR(120) NOT NULL,
+                        archivo_nombre    VARCHAR(255) NOT NULL,
+                        archivo_tipo      VARCHAR(80)  NOT NULL,
+                        archivo_datos     MEDIUMBLOB   NOT NULL,
+                        estado            VARCHAR(20)  NOT NULL DEFAULT 'PENDIENTE',
+                        observacion       VARCHAR(255) NULL,
+                        fecha_solicitud   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        fecha_resolucion  DATETIME     NULL,
+                        resuelto_por      INT          NULL,
+                        CONSTRAINT fk_sol_rec_usuario FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario)
+                    )""");
         } catch (Exception e) {
             log.warn("No se pudo verificar/migrar el esquema de seguridad automaticamente: {}", e.getMessage());
         }

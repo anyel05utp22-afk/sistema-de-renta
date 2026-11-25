@@ -356,6 +356,12 @@ public class CuotaService {
                        COALESCE(SUM(CASE WHEN dias_atraso <= 30 AND dias_atraso > 0 THEN 1 ELSE 0 END), 0) AS total_deudores
                 FROM (""" + VISTA_CUOTA + ") v WHERE v.estado_cuota = 'VENCIDA'"));
         r.put("pagos_en_revision", jdbc.queryForObject("SELECT COUNT(*) FROM pago WHERE estado_pago = 'EN_REVISION'", Integer.class));
+        Integer alertasSeguridad = 0;
+        try {
+            Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM solicitud_recuperacion WHERE estado = 'PENDIENTE'", Integer.class);
+            if (n != null) alertasSeguridad = n;
+        } catch (Exception ignored) { /* tabla aun no migrada */ }
+        r.put("alertas_seguridad", alertasSeguridad);
         r.put("unidades", unidadesActivas());
         return r;
     }

@@ -113,6 +113,21 @@ CREATE TABLE IF NOT EXISTS recibo (
     CONSTRAINT fk_recibo_pago FOREIGN KEY (id_pago) REFERENCES pago(id_pago)
 );
 
+CREATE TABLE IF NOT EXISTS solicitud_recuperacion (
+    id_solicitud      INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario        INT NOT NULL,
+    correo            VARCHAR(120) NOT NULL,
+    archivo_nombre    VARCHAR(255) NOT NULL,
+    archivo_tipo      VARCHAR(80)  NOT NULL,
+    archivo_datos     MEDIUMBLOB   NOT NULL,
+    estado            VARCHAR(20)  NOT NULL DEFAULT 'PENDIENTE',
+    observacion       VARCHAR(255) NULL,
+    fecha_solicitud   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_resolucion  DATETIME     NULL,
+    resuelto_por      INT          NULL,
+    CONSTRAINT fk_sol_rec_usuario FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario)
+);
+
 
 -- =====================================================================
 --  DATOS REALES: RESIDENCIAL LA CRUCETA - BLOCK 73 (SURCO)
