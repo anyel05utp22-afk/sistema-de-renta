@@ -35,7 +35,7 @@ public class CuotaService {
               SELECT c.id_cuota, c.id_unidad, CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad, c.periodo,
                      DATE_FORMAT(c.fecha_emision, '%Y-%m-%d') AS fecha_emision,
                      DATE_FORMAT(c.fecha_vencimiento, '%Y-%m-%d') AS fecha_vencimiento,
-                     DATEDIFF(CURDATE(), c.fecha_vencimiento) AS dias_atraso,
+                     GREATEST(DATEDIFF(CURDATE(), c.fecha_vencimiento), 0) AS dias_atraso,
                      c.estado_cuota,
                      (SELECT CONCAT(u.nombre, ' ', u.apellido) FROM usuario u
                        WHERE u.id_unidad = c.id_unidad AND u.id_rol = 2 AND u.estado_cuenta = 'ACTIVO' LIMIT 1) AS propietario,
@@ -277,7 +277,7 @@ public class CuotaService {
                 SELECT v.*,
                        (SELECT u.telefono FROM usuario u WHERE u.id_unidad = v.id_unidad AND u.id_rol = 2 LIMIT 1) AS telefono
                 FROM (""" + VISTA_CUOTA + """
-                ) v WHERE """ + condicion + " ORDER BY v.condicion_deuda DESC, v.dias_atraso DESC, v.unidad");
+                ) v WHERE """ + condicion + " ORDER BY v.dias_atraso DESC, v.unidad, v.periodo");
     }
 
     // ===================== Enviar recordatorio de cobro =====================
@@ -311,16 +311,27 @@ public class CuotaService {
     public Map<String, Object> alertarMorosidad(Integer idCuota) {
         detectarVencidas();
         if (idCuota != null) {
-            Map<String, Object> c = jdbc.queryForMap(VISTA_CUOTA + " WHERE x.id_cuota = ?", idCuota);
+            List<Map<String, Object>> filas = jdbc.queryForList(VISTA_CUOTA + " WHERE x.id_cuota = ?", idCuota);
+            if (filas.isEmpty()) throw ApiException.noEncontrado("La cuota solicitada no existe.");
+            Map<String, Object> c = filas.get(0);
             String unidad = (String) c.get("unidad");
             String prop = c.get("propietario") != null ? (String) c.get("propietario") : "Propietario";
             BigDecimal saldo = (BigDecimal) c.get("saldo");
+            int dias = c.get("dias_atraso") == null ? 0 : ((Number) c.get("dias_atraso")).intValue();
+            String tipoDeuda = dias > 30 ? "deuda en morosidad (" + dias + " dias de atraso)"
+                    : dias > 0 ? "deuda vencida (" + dias + " dias de atraso)"
+                    : "cuota pendiente";
             return Map.of("ok", true,
-                    "mensaje", "Alerta formal de morosidad emitida a " + prop + " (" + unidad + ") por deuda vencida de S/. " + saldo + ".");
+                    "mensaje", "Alerta formal emitida a " + prop + " (" + unidad + ") por " + tipoDeuda + " de S/. " + saldo + ".");
         }
-        List<Map<String, Object>> morosos = morosidad();
-        return Map.of("ok", true, "total_alertados", morosos.size(),
-                "mensaje", "Alerta formal de morosidad enviada a los " + morosos.size() + " departamentos en estado vencido.");
+        List<Map<String, Object>> vencidas = morosidad();
+        long dptosUnicos = vencidas.stream().map(m -> m.get("id_unidad")).filter(Objects::nonNull).distinct().count();
+        if (vencidas.isEmpty()) {
+            return Map.of("ok", true, "total_alertados", 0,
+                    "mensaje", "No hay departamentos con cuotas vencidas para alertar.");
+        }
+        return Map.of("ok", true, "total_alertados", dptosUnicos,
+                "mensaje", "Alerta formal de morosidad enviada a " + dptosUnicos + " departamento(s) (" + vencidas.size() + " cuota(s) vencida(s)).");
     }
 
     // ===================== RF-041 Dashboard administrativo =====================

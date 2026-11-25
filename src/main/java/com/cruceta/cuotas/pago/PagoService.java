@@ -93,7 +93,7 @@ public class PagoService {
         if ("YAPE".equals(metodo) && nroOperacion.isEmpty())
             throw ApiException.validacion("Ingrese el numero de operacion / voucher de Yape.");
         if (!nroOperacion.isEmpty()) {
-            Integer dup = jdbc.queryForObject("SELECT COUNT(*) FROM pago WHERE nro_operacion = ? AND estado_pago <> 'RECHAZADO'",
+            Integer dup = jdbc.queryForObject("SELECT COUNT(*) FROM pago WHERE nro_operacion = ? AND estado_pago NOT IN ('RECHAZADO', 'ANULADO')",
                     Integer.class, nroOperacion);
             if (dup != null && dup > 0) throw ApiException.validacion("El numero de operacion " + nroOperacion + " ya fue registrado.");
         }
@@ -187,7 +187,8 @@ public class PagoService {
     public List<Map<String, Object>> recibos(Sesion s) {
         String sql = """
                 SELECT r.id_recibo, r.numero_recibo, DATE_FORMAT(r.fecha_emision, '%Y-%m-%d') AS fecha_emision, r.observacion,
-                       v.id_pago, v.periodo, v.unidad, v.usuario, v.monto_pagado, v.metodo_pago, v.nro_operacion, v.fecha_pago, v.id_unidad
+                       v.id_pago, v.periodo, v.unidad, v.usuario, v.monto_pagado, v.metodo_pago, v.nro_operacion, v.fecha_pago,
+                       v.id_unidad, v.estado_pago
                 FROM recibo r JOIN (""" + VISTA_PAGO + """
                 ) v ON v.id_pago = r.id_pago""";
         if (s.tieneAccesoGestion()) return jdbc.queryForList(sql + " ORDER BY r.id_recibo DESC");
@@ -218,9 +219,12 @@ public class PagoService {
         }
         Path f = uploads.resolve(archivo).normalize();
 
-        // Si es boleta tipo seed o el archivo aun no existe, generamos el voucher SVG personalizado
-        if (!Files.exists(f) || archivo.startsWith("seed/")) {
+        // Si es boleta tipo seed o el archivo fisico ya no existe en disco, generamos el voucher SVG con extension .svg
+        if (archivo.startsWith("seed/")) {
             f = generarVoucherPersonalizado(row, f);
+        } else if (!Files.exists(f)) {
+            Path respaldoSvg = uploads.resolve("seed/voucher_" + row.get("id_pago") + ".svg").normalize();
+            f = generarVoucherPersonalizado(row, respaldoSvg);
         }
 
         if (!f.startsWith(uploads) || !Files.exists(f))

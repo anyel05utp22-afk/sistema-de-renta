@@ -67,19 +67,16 @@ const API = {
     put: (url, cuerpo) => API.request("PUT", url, cuerpo),
     form: (url, formData) => API.request("POST", url, formData, true),
 
-    async abrirComprobante(idComprobante) {
-        const win = window.open("", "_blank");
+    async obtenerComprobante(idComprobante) {
         const opciones = { method: "GET", headers: {} };
         if (API.token()) opciones.headers["Authorization"] = "Bearer " + API.token();
         let res;
         try {
             res = await fetch(`${BASE_API}/api/comprobantes/${idComprobante}/archivo`, opciones);
         } catch (err) {
-            if (win) win.close();
             throw new Error("No se pudo conectar al servidor para obtener el comprobante.");
         }
         if (!res.ok) {
-            if (win) win.close();
             let datos = null;
             try { datos = await res.json(); } catch (e) { /* respuesta sin cuerpo */ }
             if (res.status === 401) {
@@ -89,17 +86,11 @@ const API = {
             throw new Error((datos && (datos.error || datos.message)) || "No se pudo abrir el comprobante.");
         }
         const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        if (win) {
-            win.location.href = blobUrl;
-        } else {
-            const a = document.createElement("a");
-            a.href = blobUrl;
-            a.target = "_blank";
-            a.rel = "noopener noreferrer";
-            a.click();
-        }
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        const contentType = res.headers.get("Content-Type") || blob.type || "application/octet-stream";
+        const disp = res.headers.get("Content-Disposition") || "";
+        const m = disp.match(/filename="([^"]+)"/i);
+        const nombre = m ? m[1] : `comprobante_${idComprobante}`;
+        return { blobUrl: URL.createObjectURL(blob), contentType, nombre };
     },
 };
 
@@ -179,12 +170,13 @@ function Campo({ label, children, className, ayuda }) {
 const COLOR_ESTADO = {
     PAGADA: "b-verde", VALIDADO: "b-verde", ACTIVO: "b-verde", ACTIVA: "b-verde", "AL DIA": "b-verde",
     PENDIENTE: "b-amarillo", EN_REVISION: "b-amarillo", DEUDOR: "b-amarillo",
-    VENCIDA: "b-rojo", MOROSO: "b-rojo", RECHAZADO: "b-rojo", INACTIVO: "b-gris", INACTIVA: "b-gris",
+    VENCIDA: "b-rojo", MOROSO: "b-rojo", RECHAZADO: "b-rojo", ANULADO: "b-gris", INACTIVO: "b-gris", INACTIVA: "b-gris",
 };
 const TEXTO_ESTADO = {
     EN_REVISION: "Pagado en revisión",
     VALIDADO: "Verificado",
-    DEUDOR: "Deudor (< 30 días)",
+    ANULADO: "Anulado",
+    DEUDOR: "Deudor (≤ 30 días)",
     MOROSO: "Moroso (> 30 días)",
     "AL DIA": "Al día",
     VENCIDA: "Vencida",
@@ -668,14 +660,25 @@ function RegistrarPago({ usuario, params, ir }) {
 }
 
 /** RF-018 Consultar pagos / RF-019 Aprobar comprobante / RF-020 Rechazar / Anular pago. */
-function ListaPagos({ usuario }) {
+function ListaPagos({ usuario, ir, params }) {
     const esAdmin = usuario.rol === "ADMINISTRADOR";
     const esGestion = esAdmin || usuario.rol === "JUNTA DIRECTIVA" || usuario.rol === "JUNTA";
-    const [estado, setEstado] = useState(esAdmin ? "EN_REVISION" : "");
+    const [estado, setEstado] = useState(params && params.estado !== undefined ? params.estado : "");
     const [busqueda, setBusqueda] = useState("");
     const [pagos, recargar, error] = useDatos(`/api/pagos?estado=${estado}`);
     const [rechazo, setRechazo] = useState(null); // {id, motivo}
+    const [visor, setVisor] = useState(null); // {blobUrl, contentType, nombre, titulo}
+    const [cargandoComp, setCargandoComp] = useState(false);
     const [res, setRes] = useState(null);
+
+    const cerrarVisor = () => {
+        if (visor && visor.blobUrl) URL.revokeObjectURL(visor.blobUrl);
+        setVisor(null);
+    };
+
+    useEffect(() => {
+        return () => { if (visor && visor.blobUrl) URL.revokeObjectURL(visor.blobUrl); };
+    }, [visor]);
 
     const aprobarComprobante = async (p) => {
         if (!confirm(`¿Aprobar el comprobante de pago ${p.nro_operacion || "#" + p.id_pago} de ${p.unidad} por ${soles(p.monto_pagado)}?\nEl sistema emitirá automáticamente la constancia de pago.`)) return;
@@ -709,10 +712,17 @@ function ListaPagos({ usuario }) {
         } catch (e) { setRes({ ok: false, mensaje: e.message }); }
     };
 
-    const verComprobante = async (idComprobante) => {
+    const verComprobante = async (p) => {
+        setCargandoComp(true);
+        setRes(null);
         try {
-            await API.abrirComprobante(idComprobante);
+            const data = await API.obtenerComprobante(p.id_comprobante);
+            setVisor({
+                ...data,
+                titulo: `Comprobante — ${p.unidad} (${periodoTexto(p.periodo)})`,
+            });
         } catch (e) { setRes({ ok: false, mensaje: e.message }); }
+        setCargandoComp(false);
     };
 
     const pagosFiltrados = (pagos || []).filter((p) => {
@@ -731,6 +741,26 @@ function ListaPagos({ usuario }) {
                 <Campo label="Unidad Inmobiliaria:"><input disabled value={usuario.unidad || "-"} /></Campo>
             </div>}
             <Resultado res={res} />
+            {visor && (
+                <div className="modal-backdrop" onClick={cerrarVisor}>
+                    <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-head">
+                            <h3>{visor.titulo}</h3>
+                            <div className="acciones">
+                                <a className="btn chico verde" href={visor.blobUrl} download={visor.nombre}>Descargar</a>
+                                <button type="button" className="btn chico gris" onClick={cerrarVisor}>Cerrar</button>
+                            </div>
+                        </div>
+                        <div className="modal-body">
+                            {visor.contentType.includes("pdf") ? (
+                                <iframe src={visor.blobUrl} title="Visor de comprobante PDF" />
+                            ) : (
+                                <img src={visor.blobUrl} alt="Comprobante de pago" />
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
             {rechazo && (
                 <Alerta tipo="warn" titulo={"Rechazar comprobante de pago #" + rechazo.id}>
                     <textarea rows="2" placeholder="Motivo del rechazo (obligatorio)" value={rechazo.motivo}
@@ -742,10 +772,10 @@ function ListaPagos({ usuario }) {
                 </Alerta>
             )}
             <div className="barra">
-                <Campo label="Buscar por nombre:">
+                <Campo label="Buscar por nombre, dpto o n° operación:">
                     <input
                         type="text"
-                        placeholder="Nombre de propietario / residente..."
+                        placeholder="Nombre, departamento o n° operación..."
                         value={busqueda}
                         onChange={(e) => setBusqueda(e.target.value)}
                     />
@@ -770,7 +800,7 @@ function ListaPagos({ usuario }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {pagosFiltrados.length === 0 && <FilaVacia cols={8} />}
+                            {pagosFiltrados.length === 0 && <FilaVacia cols={8} texto="No hay pagos con el filtro seleccionado." />}
                             {pagosFiltrados.map((p) => (
                                 <tr key={p.id_pago}>
                                     <td>{fechaTexto(p.fecha_pago)}</td>
@@ -784,8 +814,21 @@ function ListaPagos({ usuario }) {
                                         {p.observacion && <div className="ayuda">Motivo: {p.observacion}</div>}
                                     </td>
                                     <td className="acciones">
-                                        {p.id_comprobante && <button type="button" className="btn chico blanco" onClick={() => verComprobante(p.id_comprobante)}>Comprobante</button>}
-                                        {p.numero_recibo && <span className="badge b-azul">{p.numero_recibo}</span>}
+                                        {p.id_comprobante && (
+                                            <button type="button" className="btn chico blanco" disabled={cargandoComp} onClick={() => verComprobante(p)}>
+                                                Comprobante
+                                            </button>
+                                        )}
+                                        {p.id_recibo && p.numero_recibo && (
+                                            <button
+                                                type="button"
+                                                className="btn chico"
+                                                title="Ver e imprimir constancia de pago"
+                                                onClick={() => ir && ir("constancias", { idRecibo: p.id_recibo })}
+                                            >
+                                                Recibo {p.numero_recibo}
+                                            </button>
+                                        )}
                                         {esAdmin && p.estado_pago === "EN_REVISION" && <>
                                             <button className="btn chico verde" title="Aprobar comprobante y emitir constancia" onClick={() => aprobarComprobante(p)}>Aprobar</button>
                                             <button className="btn chico rojo" onClick={() => setRechazo({ id: p.id_pago, motivo: "" })}>Rechazar</button>
@@ -805,60 +848,89 @@ function ListaPagos({ usuario }) {
 }
 
 /** RF-022 Consultar constancias de pago + RF-021 Emitir (imprimir) constancia. */
-function Constancias({ usuario }) {
-    const esAdmin = usuario.rol === "ADMINISTRADOR";
+function Constancias({ usuario, params }) {
+    const esGestion = usuario.rol === "ADMINISTRADOR" || usuario.rol === "JUNTA DIRECTIVA" || usuario.rol === "JUNTA";
     const [recibos, , error] = useDatos("/api/recibos");
     const [busqueda, setBusqueda] = useState("");
     const [ver, setVer] = useState(null);
 
+    useEffect(() => {
+        if (recibos && params && params.idRecibo) {
+            const encontrado = recibos.find((r) => String(r.id_recibo) === String(params.idRecibo));
+            if (encontrado) setVer(encontrado);
+        }
+    }, [recibos, params]);
+
     if (ver) {
         const dpto = (ver.unidad || "").split("-").pop().trim();
-        const [anio, mes, dia] = (ver.fecha_emision || ver.fecha_pago || "2026-10-25").split("-");
-        const conceptoRecibo = ver.metodo_pago === "YAPE"
-            ? `Pago de servicios (Yape) - ${periodoTexto(ver.periodo)}`
-            : `Pago de servicios (Efectivo) - ${periodoTexto(ver.periodo)}`;
+        const [anio, mes, dia] = (ver.fecha_emision || ver.fecha_pago || hoyISO()).substring(0, 10).split("-");
+        const nombreMes = MESES[Number(mes) - 1] || mes;
+        const metodoTexto = ver.metodo_pago === "YAPE"
+            ? "Yape"
+            : ver.metodo_pago === "EFECTIVO"
+                ? "Efectivo"
+                : "No especificado";
+        const conceptoRecibo = `Cuota de mantenimiento (${metodoTexto}) - ${periodoTexto(ver.periodo)}`;
+        const esAnulado = ver.estado_pago === "ANULADO";
         return (
             <div className="card">
-                <div className="no-print acciones" style={{ marginBottom: 10 }}>
+                <div className="no-print acciones" style={{ marginBottom: 12 }}>
                     <button className="btn gris" onClick={() => setVer(null)}>← Volver</button>
                     <button className="btn" onClick={() => window.print()}>Imprimir / Descargar PDF</button>
                 </div>
-                <div className="documento" style={{ maxWidth: 680, padding: "26px 32px", position: "relative" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                {esAnulado && (
+                    <Alerta tipo="error" titulo="Constancia anulada">
+                        Este pago fue anulado y la constancia no tiene validez vigente. {ver.observacion || ""}
+                    </Alerta>
+                )}
+                <div className="documento" style={{ maxWidth: 680, padding: "24px 28px", position: "relative" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
                         <div style={{ textAlign: "center", flex: 1 }}>
                             <h2 style={{ margin: 0, color: "#1e3a8a", fontSize: 22, letterSpacing: 1 }}>RESIDENCIAL LA CRUCETA</h2>
-                            <div style={{ color: "#1e3a8a", fontWeight: 700, fontSize: 17, marginTop: 2 }}>SURCO</div>
+                            <div style={{ color: "#1e3a8a", fontWeight: 700, fontSize: 16, marginTop: 2 }}>SURCO — CONSTANCIA DE PAGO</div>
+                            {esAnulado && <div className="sello-anulado">ANULADO</div>}
                         </div>
-                        <div style={{ fontSize: 20, fontWeight: 700, color: "#334155", minWidth: 50, textAlign: "right" }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: "#334155", textAlign: "right", whiteSpace: "nowrap" }}>
                             {dpto}
                         </div>
                     </div>
 
-                    <div style={{ marginTop: 22, lineHeight: "2.2" }}>
-                        <div><b>RECIBO :</b> ........................................................................</div>
-                        <div style={{ borderBottom: "1px dotted #64748b" }}>
-                            <b>Recibí del Sr. (a) :</b> &nbsp; <span style={{ fontSize: 17 }}>{ver.usuario}</span>
+                    <div style={{ marginTop: 20 }}>
+                        <div className="recibo-fila">
+                            <span className="etiqueta">Recibí del Sr. (a):</span>
+                            <span style={{ fontSize: 16 }}>{ver.usuario}</span>
                         </div>
-                        <div style={{ borderBottom: "1px dotted #64748b" }}>
-                            <b>La cantidad de :</b> &nbsp; <span style={{ fontSize: 18, fontWeight: 700 }}>{soles(ver.monto_pagado)}</span>
+                        <div className="recibo-fila">
+                            <span className="etiqueta">Departamento:</span>
+                            <span style={{ fontSize: 15 }}>{ver.unidad}</span>
                         </div>
-                        <div style={{ borderBottom: "1px dotted #64748b" }}>
-                            <b>Por concepto de :</b> &nbsp; <span style={{ fontSize: 16 }}>{conceptoRecibo}</span>
+                        <div className="recibo-fila">
+                            <span className="etiqueta">La cantidad de:</span>
+                            <span style={{ fontSize: 18, fontWeight: 700, color: "#065f46" }}>{soles(ver.monto_pagado)}</span>
                         </div>
-                        <div style={{ borderBottom: "1px dotted #64748b", height: 24 }}></div>
+                        <div className="recibo-fila">
+                            <span className="etiqueta">Por concepto de:</span>
+                            <span style={{ fontSize: 15 }}>{conceptoRecibo}</span>
+                        </div>
+                        {ver.nro_operacion && (
+                            <div className="recibo-fila">
+                                <span className="etiqueta">N° Operación / Referencia:</span>
+                                <span style={{ fontSize: 15 }}>{ver.nro_operacion}</span>
+                            </div>
+                        )}
                     </div>
 
-                    <div style={{ textAlign: "right", marginTop: 16, fontSize: 14 }}>
-                        Surco &nbsp; <b>{dia}</b> &nbsp; de &nbsp; <b>{mes}</b> &nbsp; 20<b>{String(anio).slice(-2)}</b>
+                    <div style={{ textAlign: "right", marginTop: 18, fontSize: 14, color: "#334155" }}>
+                        Surco, <b>{dia}</b> de <b>{nombreMes}</b> de <b>{anio}</b>
                     </div>
 
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: 26 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+                    <div className="recibo-pie">
+                        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
                             <div style={{
                                 border: "2px solid #1d4ed8", borderRadius: "50%", padding: "10px 16px",
                                 color: "#1d4ed8", textAlign: "center", fontSize: 10, fontWeight: 700, transform: "rotate(-6deg)"
                             }}>
-                                <div>EDIFICIO 73</div>
+                                <div>EDIFICIO</div>
                                 <div style={{ border: "1px solid #1d4ed8", padding: "1px 6px", margin: "3px 0" }}>LA DIRECTIVA</div>
                                 <div>LA CRUCETA - SURCO</div>
                             </div>
@@ -866,7 +938,7 @@ function Constancias({ usuario }) {
                                 N° {ver.numero_recibo}
                             </div>
                         </div>
-                        <div style={{ textAlign: "center", minWidth: 200 }}>
+                        <div style={{ textAlign: "center", minWidth: 180 }}>
                             <div style={{ fontFamily: "Segoe Print, cursive", fontSize: 16, color: "#1e293b" }}>Rosa Quispe H.</div>
                             <div style={{ borderTop: "1px dotted #334155", paddingTop: 4, fontWeight: 700, fontSize: 13 }}>
                                 LA DIRECTIVA
@@ -890,10 +962,10 @@ function Constancias({ usuario }) {
         <div className="card">
             <h2>Constancias de pago</h2>
             <div className="barra">
-                <Campo label="Buscar por nombre:">
+                <Campo label="Buscar por nombre, unidad o n° constancia:">
                     <input
                         type="text"
-                        placeholder="Nombre del propietario o residente..."
+                        placeholder="Nombre, departamento o n° constancia..."
                         value={busqueda}
                         onChange={(e) => setBusqueda(e.target.value)}
                     />
@@ -902,16 +974,33 @@ function Constancias({ usuario }) {
             {!recibos ? <Cargando error={error} /> : (
                 <div className="tabla-responsive">
                     <table>
-                        <thead><tr><th>N° Constancia</th><th>Emisión</th>{esAdmin && <th>Unidad</th>}<th>Concepto</th><th className="num">Monto (S/.)</th><th></th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th>N° Constancia</th>
+                                <th>Emisión</th>
+                                {esGestion && <th>Unidad</th>}
+                                {esGestion && <th>Propietario</th>}
+                                <th>Concepto</th>
+                                <th className="num">Monto (S/.)</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
                         <tbody>
-                            {recibosFiltrados.length === 0 && <FilaVacia cols={6} />}
+                            {recibosFiltrados.length === 0 && <FilaVacia cols={esGestion ? 8 : 6} texto="No hay constancias emitidas." />}
                             {recibosFiltrados.map((r) => (
                                 <tr key={r.id_recibo}>
-                                    <td>{r.numero_recibo}</td>
+                                    <td><b>{r.numero_recibo}</b></td>
                                     <td>{fechaTexto(r.fecha_emision)}</td>
-                                    {esAdmin && <td>{r.unidad}</td>}
+                                    {esGestion && <td>{r.unidad}</td>}
+                                    {esGestion && <td>{r.usuario || "-"}</td>}
                                     <td>Cuota Mantenimiento - {periodoTexto(r.periodo)}</td>
                                     <td className="num">{Number(r.monto_pagado).toFixed(2)}</td>
+                                    <td>
+                                        {r.estado_pago === "ANULADO"
+                                            ? <span className="badge b-rojo">Anulada</span>
+                                            : <span className="badge b-verde">Emitida</span>}
+                                    </td>
                                     <td><button className="btn chico blanco" onClick={() => setVer(r)}>Ver / Imprimir</button></td>
                                 </tr>
                             ))}
@@ -963,7 +1052,7 @@ function Dashboard({ ir }) {
             </div>
             <div className="acciones">
                 <button className="btn verde" onClick={() => ir("conceptos")}>Conceptos y cálculo de cuotas</button>
-                <button className="btn" onClick={() => ir("pagos")}>Validar pagos ({d.pagos_en_revision})</button>
+                <button className="btn" onClick={() => ir("pagos", { estado: "EN_REVISION" })}>Validar pagos ({d.pagos_en_revision})</button>
                 <button className="btn rojo" onClick={() => ir("morosidad")}>Ver morosidad</button>
             </div>
         </div>
@@ -1603,7 +1692,7 @@ function Morosidad() {
 
     const alertar = async (c) => {
         try {
-            const r = await API.post("/morosidad/alertar", c ? { id_cuota: c.id_cuota } : {});
+            const r = await API.post("/api/morosidad/alertar", c ? { id_cuota: c.id_cuota } : {});
             setRes({ ok: true, titulo: "Alerta de morosidad", mensaje: r.mensaje });
         } catch (e) {
             setRes({ ok: false, mensaje: e.message });
@@ -1682,7 +1771,7 @@ function Morosidad() {
                             <tr key={f.id_cuota}>
                                 <td>{f.unidad}</td><td>{f.propietario || "-"}</td><td>{f.telefono || "-"}</td>
                                 <td>{periodoTexto(f.periodo)}</td><td>{fechaTexto(f.fecha_vencimiento)}</td>
-                                <td className="num">{f.dias_atraso}</td>
+                                <td className="num">{Math.max(0, Number(f.dias_atraso || 0))}</td>
                                 <td>
                                     {Number(f.dias_atraso) > 30 ? (
                                         <span className="badge b-rojo" title="Más de 30 días de demora en el pago">Moroso (&gt; 30d)</span>
@@ -2253,8 +2342,8 @@ function App() {
                     {vista === "cuotas" && <ListaCuotas usuario={usuario} ir={ir} />}
                     {vista === "estado" && <EstadoCuenta usuario={usuario} ir={ir} />}
                     {vista === "registrar-pago" && <RegistrarPago usuario={usuario} params={params} ir={ir} />}
-                    {vista === "pagos" && <ListaPagos usuario={usuario} />}
-                    {vista === "constancias" && <Constancias usuario={usuario} />}
+                    {vista === "pagos" && <ListaPagos usuario={usuario} ir={ir} params={params} />}
+                    {vista === "constancias" && <Constancias usuario={usuario} params={params} />}
                     {vista === "morosidad" && <Morosidad />}
                     {vista === "unidades" && <Unidades />}
                     {vista === "usuarios" && <Usuarios />}
