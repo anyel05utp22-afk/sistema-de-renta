@@ -167,6 +167,36 @@ function Campo({ label, children, className, ayuda }) {
     );
 }
 
+function InputContrasena(props) {
+    const [visible, setVisible] = useState(false);
+    return (
+        <div className="campo-password">
+            <input {...props} type={visible ? "text" : "password"} />
+            <button
+                type="button"
+                className="btn-ojo"
+                onClick={() => setVisible((v) => !v)}
+                aria-label={visible ? "Ocultar contraseña" : "Mostrar contraseña"}
+                title={visible ? "Ocultar contraseña" : "Mostrar contraseña"}
+            >
+                {visible ? (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                        <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>
+                    </svg>
+                ) : (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                )}
+            </button>
+        </div>
+    );
+}
+
 const COLOR_ESTADO = {
     PAGADA: "b-verde", VALIDADO: "b-verde", ACTIVO: "b-verde", ACTIVA: "b-verde", "AL DIA": "b-verde",
     PENDIENTE: "b-amarillo", EN_REVISION: "b-amarillo", DEUDOR: "b-amarillo",
@@ -1136,7 +1166,7 @@ function Usuarios() {
                         <Campo label="Correo Electrónico:"><input value={f.correo} onChange={c("correo")} /></Campo>
                         <Campo label="Teléfono / Celular:"><input value={f.telefono} maxLength="9" onChange={c("telefono")} /></Campo>
                         <Campo label="Dirección:"><input value={f.direccion} onChange={c("direccion")} /></Campo>
-                        <Campo label="Contraseña inicial (opcional):" ayuda="Mínimo 8 caracteres. Si se deja vacía, se generará una contraseña temporal aleatoria que el usuario deberá cambiar en su primer ingreso."><input type="password" minLength="8" value={f.contrasena} onChange={c("contrasena")} /></Campo>
+                        <Campo label="Contraseña inicial (opcional):" ayuda="Mínimo 8 caracteres. Si se deja vacía, se generará una contraseña temporal aleatoria que el usuario deberá cambiar en su primer ingreso."><InputContrasena minLength="8" value={f.contrasena} onChange={c("contrasena")} /></Campo>
                     </div>
                     <button className="btn verde bloque">Registrar Usuario</button>
                 </form>
@@ -2064,8 +2094,8 @@ function Perfil() {
                     <Campo label="Correo electrónico:"><input value={f.correo} onChange={c("correo")} /></Campo>
                     <Campo label="Teléfono / Celular:"><input value={f.telefono || ""} maxLength="9" onChange={c("telefono")} /></Campo>
                     <Campo label="Dirección:" className="full"><input value={f.direccion || ""} onChange={c("direccion")} /></Campo>
-                    <Campo label="Contraseña actual:" ayuda="Solo si desea cambiar su contraseña."><input type="password" value={f.contrasena_actual} onChange={c("contrasena_actual")} /></Campo>
-                    <Campo label="Nueva contraseña:" ayuda="Mínimo 8 caracteres."><input type="password" minLength="8" value={f.contrasena_nueva} onChange={c("contrasena_nueva")} /></Campo>
+                    <Campo label="Contraseña actual:" ayuda="Solo si desea cambiar su contraseña."><InputContrasena value={f.contrasena_actual} onChange={c("contrasena_actual")} /></Campo>
+                    <Campo label="Nueva contraseña:" ayuda="Mínimo 8 caracteres."><InputContrasena minLength="8" value={f.contrasena_nueva} onChange={c("contrasena_nueva")} /></Campo>
                 </div>
                 <button className="btn verde bloque">Guardar cambios</button>
             </form>
@@ -2162,7 +2192,7 @@ function Login({ alEntrar }) {
                         </Campo>
                         <div style={{ marginTop: 12 }}>
                             <Campo label="Contraseña:">
-                                <input type="password" value={contrasena} onChange={(e) => setContrasena(e.target.value)} placeholder="••••••••" />
+                                <InputContrasena value={contrasena} onChange={(e) => setContrasena(e.target.value)} placeholder="••••••••" />
                             </Campo>
                         </div>
                         <button className="btn bloque">Ingresar al Sistema</button>
@@ -2221,16 +2251,16 @@ function CambiarContrasenaObligatorio({ usuario, alActualizar, alSalir }) {
                 <Resultado res={res} />
                 <form onSubmit={guardar}>
                     <Campo label="Contraseña temporal actual:">
-                        <input type="password" value={actual} onChange={(e) => setActual(e.target.value)} required />
+                        <InputContrasena value={actual} onChange={(e) => setActual(e.target.value)} required />
                     </Campo>
                     <div style={{ marginTop: 12 }}>
                         <Campo label="Nueva contraseña:" ayuda="Mínimo 8 caracteres.">
-                            <input type="password" minLength="8" value={nueva} onChange={(e) => setNueva(e.target.value)} required />
+                            <InputContrasena minLength="8" value={nueva} onChange={(e) => setNueva(e.target.value)} required />
                         </Campo>
                     </div>
                     <div style={{ marginTop: 12 }}>
                         <Campo label="Confirmar nueva contraseña:">
-                            <input type="password" minLength="8" value={confirmar} onChange={(e) => setConfirmar(e.target.value)} required />
+                            <InputContrasena minLength="8" value={confirmar} onChange={(e) => setConfirmar(e.target.value)} required />
                         </Campo>
                     </div>
                     <button className="btn verde bloque" disabled={enviando}>

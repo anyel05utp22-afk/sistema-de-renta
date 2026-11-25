@@ -222,6 +222,40 @@ input.invalido {
 }
 .ayuda { font-size: 12px; color: #64748b; margin-top: 3px; }
 
+/* ---------- Input de contrasena con boton de ojito ---------- */
+.campo-password {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.campo-password input {
+    padding-right: 42px;
+}
+.campo-password input::-ms-reveal,
+.campo-password input::-ms-clear {
+    display: none;
+}
+.btn-ojo {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    color: #64748b;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+.btn-ojo:hover {
+    color: #1e3a8a;
+    background: #eff6ff;
+}
+
 /* ---------- Botones con micro-interacciones ---------- */
 .btn {
     border: none;
