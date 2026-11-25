@@ -41,8 +41,15 @@ public class PagoService {
             JOIN cuota c   ON c.id_cuota = p.id_cuota
             JOIN unidad un ON un.id_unidad = c.id_unidad
             JOIN usuario u ON u.id_usuario = p.id_usuario
-            LEFT JOIN comprobante cp ON cp.id_comprobante =
-                 (SELECT MAX(x.id_comprobante) FROM comprobante x WHERE x.id_pago = p.id_pago)
+            LEFT JOIN (
+                SELECT c1.id_comprobante, c1.id_pago, c1.archivo, c1.estado_validacion, c1.observacion
+                FROM comprobante c1
+                INNER JOIN (
+                    SELECT id_pago, MAX(id_comprobante) AS max_id
+                    FROM comprobante
+                    GROUP BY id_pago
+                ) c2 ON c1.id_comprobante = c2.max_id
+            ) cp ON cp.id_pago = p.id_pago
             LEFT JOIN recibo r ON r.id_pago = p.id_pago
             """;
 
@@ -187,12 +194,16 @@ public class PagoService {
     public List<Map<String, Object>> recibos(Sesion s) {
         String sql = """
                 SELECT r.id_recibo, r.numero_recibo, DATE_FORMAT(r.fecha_emision, '%Y-%m-%d') AS fecha_emision, r.observacion,
-                       v.id_pago, v.periodo, v.unidad, v.usuario, v.monto_pagado, v.metodo_pago, v.nro_operacion, v.fecha_pago,
-                       v.id_unidad, v.estado_pago
-                FROM recibo r JOIN (""" + VISTA_PAGO + """
-                ) v ON v.id_pago = r.id_pago""";
+                       p.id_pago, c.periodo, CONCAT(un.bloque, ' - Dpto. ', un.numero_unidad) AS unidad,
+                       CONCAT(u.nombre, ' ', u.apellido) AS usuario, p.monto_pagado, p.metodo_pago, p.nro_operacion,
+                       DATE_FORMAT(p.fecha_pago, '%Y-%m-%d') AS fecha_pago, c.id_unidad, p.estado_pago
+                FROM recibo r
+                JOIN pago p    ON p.id_pago = r.id_pago
+                JOIN cuota c   ON c.id_cuota = p.id_cuota
+                JOIN unidad un ON un.id_unidad = c.id_unidad
+                JOIN usuario u ON u.id_usuario = p.id_usuario""";
         if (s.tieneAccesoGestion()) return jdbc.queryForList(sql + " ORDER BY r.id_recibo DESC");
-        return jdbc.queryForList(sql + " WHERE v.id_unidad = ? ORDER BY r.id_recibo DESC", s.idUnidad());
+        return jdbc.queryForList(sql + " WHERE c.id_unidad = ? ORDER BY r.id_recibo DESC", s.idUnidad());
     }
 
     // ===================== RF-049 Consultar comprobante =====================
